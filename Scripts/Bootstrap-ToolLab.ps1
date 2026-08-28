@@ -1,9 +1,13 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot)
+    [string]$RepositoryRoot
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+    $RepositoryRoot = Split-Path -Parent $PSScriptRoot
+}
 
 $repo = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 $pluginSource = Join-Path $repo 'UnrealPlugin\CotSDeveloperTools'
