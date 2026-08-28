@@ -1,0 +1,27 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "CotS",
+  "Description": "Disposable Unreal Engine 5.8 laboratory for CotS Developer Tools.",
+  "Modules": [
+    {
+      "Name": "CotSToolLab",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "CotSDeveloperTools",
+      "Enabled": true
+    },
+    {
+      "Name": "PythonScriptPlugin",
+      "Enabled": true
+    },
+    {
+      "Name": "EditorScriptingUtilities",
+      "Enabled": true
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "CotS Developer Tools",
+  "Description": "Agent-neutral Unreal Editor automation and validation tools for Chronicles of the Sigilarium.",
+  "Category": "CotS",
+  "CreatedBy": "CotS",
+  "CanContainContent": true,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "CotSDeveloperTools",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

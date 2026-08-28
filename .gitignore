@@ -1,0 +1,39 @@
+# Unreal Engine
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+*.VC.db
+*.VC.opendb
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.xcodeproj
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Agent-local configuration and logs
+.codex/
+.claude/
+AgentRuns/
+*.local.json
+*.local.toml
+
+# Plugin generated output
+UnrealPlugin/CotSDeveloperTools/Binaries/
+UnrealPlugin/CotSDeveloperTools/Intermediate/
+
+# Tool Lab generated output
+ToolLab/Binaries/
+ToolLab/Build/
+ToolLab/DerivedDataCache/
+ToolLab/Intermediate/
+ToolLab/Saved/
+ToolLab/Plugins/CotSDeveloperTools

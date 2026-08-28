@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cots.local/schemas/tool-result.schema.json",
+  "title": "CotS Tool Result",
+  "type": "object",
+  "required": ["success", "operation", "changed_objects", "warnings", "errors"],
+  "properties": {
+    "success": { "type": "boolean" },
+    "operation": { "type": "string", "minLength": 1 },
+    "dry_run": { "type": "boolean", "default": false },
+    "changed_objects": { "type": "array", "items": { "type": "string" } },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "errors": { "type": "array", "items": { "type": "string" } },
+    "validation": { "type": "array", "items": { "type": "string" } },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "data": {}
+  },
+  "additionalProperties": true
+}
