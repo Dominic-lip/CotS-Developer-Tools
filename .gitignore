@@ -22,6 +22,9 @@ Thumbs.db
 # Agent-local configuration and logs
 .codex/
 .claude/
+.cursor/
+.gemini/
+.mcp.json
 AgentRuns/
 *.local.json
 *.local.toml
@@ -37,3 +40,5 @@ ToolLab/DerivedDataCache/
 ToolLab/Intermediate/
 ToolLab/Saved/
 ToolLab/Plugins/CotSDeveloperTools
+ToolLab/Config/DefaultEngine.ini
+ToolLab/Config/DefaultInput.ini
