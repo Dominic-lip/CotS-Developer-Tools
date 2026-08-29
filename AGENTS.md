@@ -32,6 +32,13 @@ For substantial tasks use this sequence:
 
 Do not claim success when a build/test was not actually run. Distinguish `implemented`, `compiled`, `tested`, and `verified in Unreal`.
 
+## Unreal build execution safety
+- UnrealBuildTool writes and rotates diagnostics under `%LOCALAPPDATA%\UnrealBuildTool`. Some AI-agent sandboxes cannot write there even when they can edit the repository.
+- Use `Scripts\Build-ToolLab.cmd` as the canonical Tool Lab build entry point. It performs a write preflight before launching UBT.
+- If the build script reports `[BLOCKED]`, do not retry raw `dotnet`, `UnrealBuildTool`, or `Build.bat` from the same sandbox; doing so can cause the misleading Windows `dotnet.exe` CLR error `0xE0434352`.
+- Instead request an explicitly unsandboxed/approved command execution when the client supports it, or ask the human operator to run `Scripts\Build-ToolLab.cmd` from a normal user PowerShell.
+- A build is considered verified only when the canonical script returns exit code 0 and UBT reports `Result: Succeeded`.
+
 ## Unreal / MCP rules
 - Target Unreal Engine 5.8 unless a task says otherwise.
 - Prefer Epic's native Unreal MCP capabilities when they are sufficient.
