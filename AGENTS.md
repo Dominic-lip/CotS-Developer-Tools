@@ -13,6 +13,12 @@ The expected local workspace is:
 
 Never delete, reset, clean, reorganize, rename, or wholesale-migrate Shardlands. Never use destructive Git commands (`reset --hard`, forced checkout, history rewrite, force push, broad clean) without explicit human authorization.
 
+## Agent concurrency safety
+- Only one mutating AI agent may operate against a given Unreal project, asset set, filesystem workspace, or Git worktree at a time.
+- Codex and Claude may both be connected for read-only compatibility checks, but do not let them concurrently create, edit, rename, delete, save, compile, run PIE mutations, or commit against the same working state.
+- Normal operation is one active agent and the other on standby. Hand over by stopping the first agent, recording current state/results, then starting the second against the same task specification.
+- Parallel mutation is allowed only when work is deliberately isolated into separate repositories/worktrees/projects with non-overlapping scope.
+
 ## Working method
 For substantial tasks use this sequence:
 
