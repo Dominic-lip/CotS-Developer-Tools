@@ -1,4 +1,5 @@
 #include "Core/CotSOperationResult.h"
+#include "Execution/CotSExecutionToolset.h"
 #include "Foundation/CotSFoundationToolset.h"
 #include "Inspection/CotSInspectionToolset.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -41,6 +42,62 @@ bool FCotSInspectionRegistrationTest::RunTest(const FString& Parameters)
 {
     TestTrue(TEXT("Inspection toolset is registered"), UToolsetRegistry::IsToolsetClassRegistered(UCotSInspectionToolset::StaticClass()));
     TestTrue(TEXT("Inspection schema exposes SearchAssets"), UToolsetRegistry::GetToolsetJsonSchema(UCotSInspectionToolset::StaticClass()).Contains(TEXT("SearchAssets")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCotSExecutionRegistrationTest, "CotS.Execution.ToolRegistration", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FCotSExecutionRegistrationTest::RunTest(const FString& Parameters)
+{
+    TestTrue(TEXT("Execution toolset is registered"), UToolsetRegistry::IsToolsetClassRegistered(UCotSExecutionToolset::StaticClass()));
+    TestTrue(TEXT("Execution schema exposes ExecuteReadOnlyQuery"), UToolsetRegistry::GetToolsetJsonSchema(UCotSExecutionToolset::StaticClass()).Contains(TEXT("ExecuteReadOnlyQuery")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCotSExecutionValidQueryTest, "CotS.Execution.ValidHarmlessQuery", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FCotSExecutionValidQueryTest::RunTest(const FString& Parameters)
+{
+    const FString FirstResponse = UCotSExecutionToolset::ExecuteReadOnlyQuery(TEXT("project.context"));
+    const FString SecondResponse = UCotSExecutionToolset::ExecuteReadOnlyQuery(TEXT("project.context"));
+    TSharedPtr<FJsonObject> FirstJson;
+    TSharedPtr<FJsonObject> SecondJson;
+    TestTrue(TEXT("First harmless query returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(FirstResponse), FirstJson));
+    TestTrue(TEXT("Repeated harmless query returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(SecondResponse), SecondJson));
+    TestTrue(TEXT("Harmless query succeeds"), FirstJson.IsValid() && FirstJson->GetBoolField(TEXT("success")));
+    TestEqual(TEXT("Harmless query reports its operation"), FirstJson->GetStringField(TEXT("operation")), FString(TEXT("CotS.Execution.ExecuteReadOnlyQuery")));
+    TestTrue(TEXT("Harmless query generates an operation id"), !FirstJson->GetStringField(TEXT("operation_id")).IsEmpty());
+    TestTrue(TEXT("Repeat invocation gets a distinct operation id"), FirstJson->GetStringField(TEXT("operation_id")) != SecondJson->GetStringField(TEXT("operation_id")));
+    TestTrue(TEXT("Harmless query returns project name"), FirstJson->GetObjectField(TEXT("data"))->HasField(TEXT("project_name")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCotSExecutionFailureTest, "CotS.Execution.RefusesUnsupportedRequests", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FCotSExecutionFailureTest::RunTest(const FString& Parameters)
+{
+    const TArray<FString> ForbiddenRequests = {
+        TEXT("cmd.exe /c whoami"),
+        TEXT("powershell -Command Get-Process"),
+        TEXT("import subprocess; subprocess.run(['cmd.exe'])"),
+        TEXT("raise RuntimeError('not executed')"),
+        TEXT("cvar.r.ScreenPercentage; quit")
+    };
+
+    for (const FString& Request : ForbiddenRequests)
+    {
+        TSharedPtr<FJsonObject> Json;
+        TestTrue(FString::Printf(TEXT("Forbidden request '%s' returns JSON"), *Request), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSExecutionToolset::ExecuteReadOnlyQuery(Request)), Json));
+        TestFalse(FString::Printf(TEXT("Forbidden request '%s' is refused"), *Request), Json.IsValid() && Json->GetBoolField(TEXT("success")));
+        TestEqual(FString::Printf(TEXT("Forbidden request '%s' has forbidden error code"), *Request), Json->GetArrayField(TEXT("error_details"))[0]->AsObject()->GetStringField(TEXT("code")), FString(TEXT("forbidden_request")));
+    }
+
+    TSharedPtr<FJsonObject> EmptyJson;
+    TestTrue(TEXT("Empty request returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSExecutionToolset::ExecuteReadOnlyQuery(TEXT(""))), EmptyJson));
+    TestFalse(TEXT("Empty request fails"), EmptyJson.IsValid() && EmptyJson->GetBoolField(TEXT("success")));
+    TestEqual(TEXT("Empty request has a stable error code"), EmptyJson->GetArrayField(TEXT("error_details"))[0]->AsObject()->GetStringField(TEXT("code")), FString(TEXT("empty_request")));
+
+    TSharedPtr<FJsonObject> MissingCvarJson;
+    TestTrue(TEXT("Missing cvar returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSExecutionToolset::ExecuteReadOnlyQuery(TEXT("cvar.CotS.NonexistentTask007Cvar"))), MissingCvarJson));
+    TestFalse(TEXT("Missing cvar fails cleanly"), MissingCvarJson.IsValid() && MissingCvarJson->GetBoolField(TEXT("success")));
+    TestEqual(TEXT("Missing cvar uses execution failure code"), MissingCvarJson->GetArrayField(TEXT("error_details"))[0]->AsObject()->GetStringField(TEXT("code")), FString(TEXT("query_execution_failed")));
     return true;
 }
 

@@ -1,6 +1,7 @@
 #include "CotSDeveloperToolsModule.h"
 
 #include "Foundation/CotSFoundationToolset.h"
+#include "Execution/CotSExecutionToolset.h"
 #include "Inspection/CotSInspectionToolset.h"
 #include "Misc/CoreDelegates.h"
 #include "ToolsetRegistry/UToolsetRegistry.h"
@@ -27,9 +28,11 @@ void FCotSDeveloperToolsModule::RegisterToolsets()
 
     UToolsetRegistry::RegisterToolsetClass(UCotSFoundationToolset::StaticClass());
     UToolsetRegistry::RegisterToolsetClass(UCotSInspectionToolset::StaticClass());
+    UToolsetRegistry::RegisterToolsetClass(UCotSExecutionToolset::StaticClass());
     bToolsetsRegistered = UToolsetRegistry::IsToolsetClassRegistered(UCotSFoundationToolset::StaticClass())
-        && UToolsetRegistry::IsToolsetClassRegistered(UCotSInspectionToolset::StaticClass());
-    UE_LOG(LogCotSDeveloperTools, Display, TEXT("CotS Developer Tools loaded; inspection toolset registration: %s."),
+        && UToolsetRegistry::IsToolsetClassRegistered(UCotSInspectionToolset::StaticClass())
+        && UToolsetRegistry::IsToolsetClassRegistered(UCotSExecutionToolset::StaticClass());
+    UE_LOG(LogCotSDeveloperTools, Display, TEXT("CotS Developer Tools loaded; toolset registration: %s."),
         bToolsetsRegistered ? TEXT("ready") : TEXT("unavailable"));
 }
 
@@ -43,6 +46,7 @@ void FCotSDeveloperToolsModule::ShutdownModule()
 
     if (bToolsetsRegistered)
     {
+        UToolsetRegistry::UnregisterToolsetClass(UCotSExecutionToolset::StaticClass());
         UToolsetRegistry::UnregisterToolsetClass(UCotSInspectionToolset::StaticClass());
         UToolsetRegistry::UnregisterToolsetClass(UCotSFoundationToolset::StaticClass());
         bToolsetsRegistered = false;

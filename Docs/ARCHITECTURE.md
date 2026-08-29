@@ -61,6 +61,12 @@ The exact MCP schema may evolve, but the semantic contract should remain stable.
 
 The foundation implementation additionally emits `operation_id`, `status`, `schema_version`, `affected_object_paths`, and `error_details` (`code` and `message`). `changed_objects` remains for compatibility with the original schema. Tools return this envelope as JSON text, so it is machine-readable through both direct MCP registration and tool-search dispatch.
 
+The development-only Execution toolset is intentionally a constrained read-only query
+surface, not arbitrary Python, console, shell, or UObject invocation. UE 5.8's Python
+plugin has useful result/log capture but no reliable sandbox for submitted code. See
+`Docs/EXECUTION_BRIDGE.md`; expand novel workflows into typed domain toolsets rather
+than broadening the execution surface.
+
 ## Mutation convention
 
 Future mutating tools validate and enumerate their impact before opening a transaction. They accept a dry-run/preview mode where practical, open `FCotSEditorMutationScope` only for a real mutation, call `Modify()` on every changed UObject, and return every affected object path in the shared result envelope. Repeatable operations should detect an already-satisfied desired state and report it without creating duplicate content.
