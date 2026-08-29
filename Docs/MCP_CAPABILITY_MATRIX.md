@@ -86,3 +86,7 @@ Prioritize these CotSDeveloperTools toolsets after the planned foundation work:
 Do not duplicate native primitive actor, asset lifecycle, Blueprint compile, material,
 DataTable/DataAsset, PIE, Automation Framework, or log retrieval operations.
 
+## TASK-008 mutation decision
+
+Native MCP remains the preferred direct route for ordinary AssetTools lifecycle, ActorTools transforms/lifecycle, Blueprint compile, and DataAsset/DataTable schema operations. `CotSMutationToolset` adds only the guardrail gap: exact-path validation, previewable move/duplicate/delete intent, a disposable test scope, typed allowlisted property mutation, transaction/undo truthfulness, idempotent component handling, and uniform `FCotSOperationResult` audit data. It does not expose arbitrary reflection, component-class construction, shell, Python, or data-pipeline mutation.
+

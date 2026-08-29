@@ -16,7 +16,9 @@ public class CotSDeveloperTools : ModuleRules
             "CoreUObject",
             "Engine",
             "UnrealEd",
+            "AssetTools",
             "AssetRegistry",
+            "EditorScriptingUtilities",
             "Projects",
             "Json",
             "ToolsetRegistry"

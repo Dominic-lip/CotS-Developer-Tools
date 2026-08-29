@@ -71,6 +71,12 @@ than broadening the execution surface.
 
 Future mutating tools validate and enumerate their impact before opening a transaction. They accept a dry-run/preview mode where practical, open `FCotSEditorMutationScope` only for a real mutation, call `Modify()` on every changed UObject, and return every affected object path in the shared result envelope. Repeatable operations should detect an already-satisfied desired state and report it without creating duplicate content.
 
+### Safe mutation primitives (TASK-008)
+
+`CotSMutationToolset` is a guarded composite layer, not a replacement for Epic's native MCP `AssetTools`, `ActorTools`, `BlueprintTools`, `DataAssetTools`, or `DataTableTools`. Agents should use those native tools directly for ordinary atomic lifecycle, compile, and schema operations. CotS adds exact `/Game/...Asset.Asset` identity validation, preview/impact envelopes, disposable-delete boundaries, typed `UCurveFloat.bIsEventCurve` mutation, idempotent actor/component operations, transaction reporting, and re-inspection guidance.
+
+Asset creation, rename/move, duplicate, deletion, and save are package-backed and explicitly reported as non-undoable. Typed UObject property changes and scene actor/component changes open `FCotSEditorMutationScope` and call `Modify()` before mutation. Deletion is restricted to `/Game/CotSMutationLive/`; disposable actors and components require the `CotSMutation_` prefix.
+
 ## MCP registration
 
 UE 5.8 registers a `UToolsetDefinition` with `UToolsetRegistry::RegisterToolsetClass`. Its static `UFUNCTION(meta=(AICallable))` methods become tool definitions. The installed `ModelContextProtocolEditor` module observes Toolset Registry registration and adapts the toolset into MCP; with tool search enabled it is available via `list_toolsets`, `describe_toolset`, and `call_tool`, otherwise it is exposed directly in `tools/list`. `UCotSFoundationToolset::GetStatus` is the deliberately minimal registration proof.

@@ -13,6 +13,9 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimationAsset.h"
 #include "Animation/BlendSpace.h"
+#include "Components/ActorComponent.h"
+#include "Curves/CurveFloat.h"
+#include "GameFramework/Actor.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/App.h"
 #include "Misc/EngineVersion.h"
@@ -140,6 +143,33 @@ FString UCotSInspectionToolset::GetAsset(const FString& ObjectPath)
     Asset.TagsAndValues.ForEach([&Metadata](const TPair<FName, FAssetTagValueRef>& Pair) { Metadata->SetStringField(Pair.Key.ToString(), Pair.Value.AsString()); });
     Result.Data->SetObjectField(TEXT("metadata"), Metadata);
     return Result.ToJson();
+}
+
+FString UCotSInspectionToolset::GetCurveFloat(const FString& ObjectPath)
+{
+    UCurveFloat* Curve = LoadObject<UCurveFloat>(nullptr, *ObjectPath);
+    if (!Curve) { return InvalidPath(TEXT("CotS.Inspection.GetCurveFloat"), ObjectPath).ToJson(); }
+    FCotSOperationResult Result = FCotSOperationResult::Succeed(TEXT("CotS.Inspection.GetCurveFloat"));
+    Result.AddAffectedObject(Curve->GetPathName()); Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("object_path"), Curve->GetPathName());
+    Result.Data->SetBoolField(TEXT("is_event_curve"), Curve->bIsEventCurve);
+    return Result.ToJson();
+}
+
+FString UCotSInspectionToolset::GetActor(const FString& ActorPath)
+{
+    AActor* Actor = FindObject<AActor>(nullptr, *ActorPath);
+    if (!IsValid(Actor) || !Actor->GetPathName().Equals(ActorPath, ESearchCase::CaseSensitive))
+    {
+        FCotSOperationResult Missing = FCotSOperationResult::Succeed(TEXT("CotS.Inspection.GetActor"));
+        Missing.Data = MakeShared<FJsonObject>(); Missing.Data->SetStringField(TEXT("actor_path"), ActorPath); Missing.Data->SetBoolField(TEXT("exists"), false); return Missing.ToJson();
+    }
+    FCotSOperationResult Result = FCotSOperationResult::Succeed(TEXT("CotS.Inspection.GetActor"));
+    Result.AddAffectedObject(ActorPath); Result.Data = MakeShared<FJsonObject>(); Result.Data->SetBoolField(TEXT("exists"), true);
+    Result.Data->SetStringField(TEXT("actor_path"), ActorPath); Result.Data->SetStringField(TEXT("label"), Actor->GetActorLabel()); Result.Data->SetStringField(TEXT("location"), Actor->GetActorLocation().ToString());
+    TArray<TSharedPtr<FJsonValue>> Components;
+    for (UActorComponent* Component : Actor->GetComponents()) { if (Component) { Components.Add(MakeShared<FJsonValueString>(Component->GetPathName())); } }
+    Result.Data->SetArrayField(TEXT("components"), Components); return Result.ToJson();
 }
 
 FString UCotSInspectionToolset::GetReferences(const FString& ObjectPath, bool bReferencers)
