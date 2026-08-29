@@ -1,5 +1,8 @@
 #include "Core/CotSOperationResult.h"
 #include "Foundation/CotSFoundationToolset.h"
+#include "Inspection/CotSInspectionToolset.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Curves/CurveFloat.h"
 #include "Misc/AutomationTest.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -30,6 +33,56 @@ bool FCotSFoundationRegistrationTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Foundation toolset is registered"), UToolsetRegistry::IsToolsetClassRegistered(UCotSFoundationToolset::StaticClass()));
     const FString Schema = UToolsetRegistry::GetToolsetJsonSchema(UCotSFoundationToolset::StaticClass());
     TestTrue(TEXT("Foundation schema exposes GetStatus"), Schema.Contains(TEXT("GetStatus")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCotSInspectionRegistrationTest, "CotS.Inspection.ToolRegistration", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FCotSInspectionRegistrationTest::RunTest(const FString& Parameters)
+{
+    TestTrue(TEXT("Inspection toolset is registered"), UToolsetRegistry::IsToolsetClassRegistered(UCotSInspectionToolset::StaticClass()));
+    TestTrue(TEXT("Inspection schema exposes SearchAssets"), UToolsetRegistry::GetToolsetJsonSchema(UCotSInspectionToolset::StaticClass()).Contains(TEXT("SearchAssets")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCotSInspectionExactPathTest, "CotS.Inspection.ExactPathsAndEmptyReferences", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FCotSInspectionExactPathTest::RunTest(const FString& Parameters)
+{
+    IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    UPackage* PackageA = CreatePackage(TEXT("/Game/CotSInspectionFixtures/FolderA/SharedInspectionAsset"));
+    UPackage* PackageB = CreatePackage(TEXT("/Game/CotSInspectionFixtures/FolderB/SharedInspectionAsset"));
+    UCurveFloat* AssetA = NewObject<UCurveFloat>(PackageA, TEXT("SharedInspectionAsset"), RF_Public | RF_Standalone);
+    UCurveFloat* AssetB = NewObject<UCurveFloat>(PackageB, TEXT("SharedInspectionAsset"), RF_Public | RF_Standalone);
+    FAssetRegistryModule::AssetCreated(AssetA);
+    FAssetRegistryModule::AssetCreated(AssetB);
+
+    TSharedPtr<FJsonObject> SearchJson;
+    TSharedRef<TJsonReader<>> SearchReader = TJsonReaderFactory<>::Create(UCotSInspectionToolset::SearchAssets(TEXT("SharedInspectionAsset"), TEXT("/Game/CotSInspectionFixtures"), TEXT("/Script/Engine.CurveFloat")));
+    TestTrue(TEXT("Ambiguous-name search returns JSON"), FJsonSerializer::Deserialize(SearchReader, SearchJson));
+    const TArray<TSharedPtr<FJsonValue>>* Assets = nullptr;
+    TestTrue(TEXT("Ambiguous-name search returns an assets collection"), SearchJson.IsValid() && SearchJson->GetObjectField(TEXT("data"))->TryGetArrayField(TEXT("assets"), Assets));
+    TestTrue(TEXT("Ambiguous-name search returns both exact paths"), Assets && Assets->Num() == 2);
+
+    TSharedPtr<FJsonObject> DuplicatesJson;
+    TSharedRef<TJsonReader<>> DuplicatesReader = TJsonReaderFactory<>::Create(UCotSInspectionToolset::FindDuplicateNames(TEXT("SharedInspectionAsset")));
+    TestTrue(TEXT("Duplicate-name query returns JSON"), FJsonSerializer::Deserialize(DuplicatesReader, DuplicatesJson));
+    const TArray<TSharedPtr<FJsonValue>>* Duplicates = nullptr;
+    TestTrue(TEXT("Duplicate-name query returns the two exact paths"), DuplicatesJson.IsValid() && DuplicatesJson->GetObjectField(TEXT("data"))->TryGetArrayField(TEXT("duplicates"), Duplicates) && Duplicates && Duplicates->Num() == 1);
+
+    TSharedPtr<FJsonObject> ReferencesJson;
+    TSharedRef<TJsonReader<>> ReferencesReader = TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetReferences(AssetA->GetPathName(), false));
+    TestTrue(TEXT("Zero-dependency query returns JSON"), FJsonSerializer::Deserialize(ReferencesReader, ReferencesJson));
+    TestTrue(TEXT("Zero-dependency query succeeds"), ReferencesJson.IsValid() && ReferencesJson->GetBoolField(TEXT("success")));
+    const TArray<TSharedPtr<FJsonValue>>* Dependencies = nullptr;
+    TestTrue(TEXT("Zero-dependency query has an empty collection"), ReferencesJson->GetObjectField(TEXT("data"))->TryGetArrayField(TEXT("dependencies"), Dependencies) && Dependencies && Dependencies->IsEmpty());
+
+    TSharedPtr<FJsonObject> ReferencersJson;
+    TSharedRef<TJsonReader<>> ReferencersReader = TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetReferences(AssetA->GetPathName(), true));
+    TestTrue(TEXT("Zero-referencer query returns JSON"), FJsonSerializer::Deserialize(ReferencersReader, ReferencersJson));
+    const TArray<TSharedPtr<FJsonValue>>* Referencers = nullptr;
+    TestTrue(TEXT("Zero-referencer query succeeds with an empty collection"), ReferencersJson.IsValid() && ReferencersJson->GetBoolField(TEXT("success")) && ReferencersJson->GetObjectField(TEXT("data"))->TryGetArrayField(TEXT("referencers"), Referencers) && Referencers && Referencers->IsEmpty());
+
+    FAssetRegistryModule::AssetDeleted(AssetA);
+    FAssetRegistryModule::AssetDeleted(AssetB);
     return true;
 }
 

@@ -1,6 +1,7 @@
 #include "CotSDeveloperToolsModule.h"
 
 #include "Foundation/CotSFoundationToolset.h"
+#include "Inspection/CotSInspectionToolset.h"
 #include "Misc/CoreDelegates.h"
 #include "ToolsetRegistry/UToolsetRegistry.h"
 
@@ -10,24 +11,26 @@ void FCotSDeveloperToolsModule::StartupModule()
 {
     if (UToolsetRegistry::IsAvailable())
     {
-        RegisterFoundationToolset();
+        RegisterToolsets();
         return;
     }
 
-    PostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddRaw(this, &FCotSDeveloperToolsModule::RegisterFoundationToolset);
+    PostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddRaw(this, &FCotSDeveloperToolsModule::RegisterToolsets);
 }
 
-void FCotSDeveloperToolsModule::RegisterFoundationToolset()
+void FCotSDeveloperToolsModule::RegisterToolsets()
 {
-    if (bFoundationToolsetRegistered)
+    if (bToolsetsRegistered)
     {
         return;
     }
 
     UToolsetRegistry::RegisterToolsetClass(UCotSFoundationToolset::StaticClass());
-    bFoundationToolsetRegistered = UToolsetRegistry::IsToolsetClassRegistered(UCotSFoundationToolset::StaticClass());
-    UE_LOG(LogCotSDeveloperTools, Display, TEXT("CotS Developer Tools foundation loaded; registered %s."),
-        bFoundationToolsetRegistered ? TEXT("CotS.Foundation.GetStatus") : TEXT("no toolset (registry unavailable)"));
+    UToolsetRegistry::RegisterToolsetClass(UCotSInspectionToolset::StaticClass());
+    bToolsetsRegistered = UToolsetRegistry::IsToolsetClassRegistered(UCotSFoundationToolset::StaticClass())
+        && UToolsetRegistry::IsToolsetClassRegistered(UCotSInspectionToolset::StaticClass());
+    UE_LOG(LogCotSDeveloperTools, Display, TEXT("CotS Developer Tools loaded; inspection toolset registration: %s."),
+        bToolsetsRegistered ? TEXT("ready") : TEXT("unavailable"));
 }
 
 void FCotSDeveloperToolsModule::ShutdownModule()
@@ -38,10 +41,11 @@ void FCotSDeveloperToolsModule::ShutdownModule()
         PostEngineInitHandle.Reset();
     }
 
-    if (bFoundationToolsetRegistered)
+    if (bToolsetsRegistered)
     {
+        UToolsetRegistry::UnregisterToolsetClass(UCotSInspectionToolset::StaticClass());
         UToolsetRegistry::UnregisterToolsetClass(UCotSFoundationToolset::StaticClass());
-        bFoundationToolsetRegistered = false;
+        bToolsetsRegistered = false;
     }
 }
 

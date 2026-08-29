@@ -14,8 +14,8 @@ public:
     virtual void ShutdownModule() override;
 
 private:
-    void RegisterFoundationToolset();
+    void RegisterToolsets();
 
     FDelegateHandle PostEngineInitHandle;
-    bool bFoundationToolsetRegistered = false;
+    bool bToolsetsRegistered = false;
 };
