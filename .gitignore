@@ -26,6 +26,8 @@ Thumbs.db
 .gemini/
 .mcp.json
 AgentRuns/
+.cots/
+__pycache__/
 *.local.json
 *.local.toml
 

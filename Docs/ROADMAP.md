@@ -34,6 +34,11 @@ Create/move/rename assets, set properties, create actors/components, save, compi
 ## M6 — Build/test/diagnostics
 Agents must be able to compile their own work, run Automation/PIE tests, collect logs and distinguish warnings from failures.
 
+## M6.5 — Autonomous lifecycle controller (TASK-008A)
+- Loopback-only, agent-neutral Host MCP controls the disposable ToolLab lifecycle.
+- Fixed open/close/readiness/build/test operations preserve one mutating agent at a time.
+- No arbitrary host command, process, PID, or filesystem capability is exposed.
+
 ## M7 — Autonomous proof
 The same specification is executed once by Codex and once by Claude: create a small test actor, compile/save, run it in PIE, inspect runtime state, stop PIE and report all changes without human editor clicking.
 

@@ -20,6 +20,7 @@ public class CotSDeveloperTools : ModuleRules
             "AssetRegistry",
             "EditorScriptingUtilities",
             "Projects",
+            "Slate",
             "Json",
             "ToolsetRegistry"
         });

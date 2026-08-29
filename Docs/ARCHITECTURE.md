@@ -81,6 +81,10 @@ Asset creation, rename/move, duplicate, deletion, and save are package-backed an
 
 UE 5.8 registers a `UToolsetDefinition` with `UToolsetRegistry::RegisterToolsetClass`. Its static `UFUNCTION(meta=(AICallable))` methods become tool definitions. The installed `ModelContextProtocolEditor` module observes Toolset Registry registration and adapts the toolset into MCP; with tool search enabled it is available via `list_toolsets`, `describe_toolset`, and `call_tool`, otherwise it is exposed directly in `tools/list`. `UCotSFoundationToolset::GetStatus` is the deliberately minimal registration proof.
 
+## Autonomous ToolLab shutdown
+
+The loopback Host controller owns the process record for ToolLab but delegates normal shutdown to the narrowly typed `CotSDeveloperTools.CotSLifecycleToolset.RequestToolLabShutdown` through UE 5.8 MCP's tool-search dispatcher. The tool admits only the CotSToolLab editor context, rejects Slate modal activity and persistent dirty packages, requests a clean PIE end then requires a retry, and finally calls `FPlatformMisc::RequestExit(false)`. An MCP acknowledgement is not completion: the Host waits for its exact recorded PID and port 8000 to disappear. WM_CLOSE is only a constrained owned-window fallback after MCP transport failure; it is never used after a lifecycle safety refusal.
+
 ## Safety model
 Inspection is broadly allowed. Mutation is scoped. Bulk/destructive operations should expose impact before execution. Shardlands is read-only by policy until a task explicitly opts in. Git is a safety net, not permission to destroy work.
 

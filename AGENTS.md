@@ -39,6 +39,12 @@ Do not claim success when a build/test was not actually run. Distinguish `implem
 - Instead request an explicitly unsandboxed/approved command execution when the client supports it, or ask the human operator to run `Scripts\Build-ToolLab.cmd` from a normal user PowerShell.
 - A build is considered verified only when the canonical script returns exit code 0 and UBT reports `Result: Succeeded`.
 
+## Autonomous ToolLab lifecycle
+
+- `Scripts\CotSHostMcp.py` is the sole agent-neutral host controller. It listens only on loopback and exposes fixed lifecycle/build/test operations; it is not a shell or process-control endpoint.
+- Before any ToolLab lifecycle mutation, acquire its persistent `agent_id` lock. Release it when the handoff is complete. The `.cots/` lock/checkpoint is local and ignored, but does not supersede the one-mutating-agent policy above.
+- The controller may gracefully close only the editor process it launched and recorded. Its primary close path is the fixed UE MCP lifecycle tool; it must verify exact PID exit before reporting success. Do not substitute arbitrary PID termination for this safety boundary.
+
 ## Unreal / MCP rules
 - Target Unreal Engine 5.8 unless a task says otherwise.
 - Prefer Epic's native Unreal MCP capabilities when they are sufficient.

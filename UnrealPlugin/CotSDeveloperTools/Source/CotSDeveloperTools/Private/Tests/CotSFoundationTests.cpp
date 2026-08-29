@@ -2,6 +2,7 @@
 #include "Execution/CotSExecutionToolset.h"
 #include "Foundation/CotSFoundationToolset.h"
 #include "Inspection/CotSInspectionToolset.h"
+#include "Lifecycle/CotSLifecycleToolset.h"
 #include "Mutation/CotSMutationToolset.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Curves/CurveFloat.h"
@@ -9,6 +10,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "ToolsetRegistry/UToolsetRegistry.h"
+#include "UObject/Package.h"
 
 #include <limits>
 
@@ -152,6 +154,22 @@ bool FCotSMutationRegistrationTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Mutation toolset is registered"), UToolsetRegistry::IsToolsetClassRegistered(UCotSMutationToolset::StaticClass()));
     const FString Schema = UToolsetRegistry::GetToolsetJsonSchema(UCotSMutationToolset::StaticClass());
     TestTrue(TEXT("Mutation schema exposes preview-capable asset move"), Schema.Contains(TEXT("MoveAsset")) && Schema.Contains(TEXT("bDryRun")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCotSLifecyclePreflightTest, "CotS.Lifecycle.PreflightAndRegistration", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FCotSLifecyclePreflightTest::RunTest(const FString& Parameters)
+{
+    TestTrue(TEXT("Lifecycle toolset is registered"), UToolsetRegistry::IsToolsetClassRegistered(UCotSLifecycleToolset::StaticClass()));
+    const FString Schema = UToolsetRegistry::GetToolsetJsonSchema(UCotSLifecycleToolset::StaticClass());
+    TestTrue(TEXT("Lifecycle schema exposes only the fixed shutdown operation"), Schema.Contains(TEXT("RequestToolLabShutdown")));
+    TestFalse(TEXT("Transient package is not persistent shutdown state"), UCotSLifecycleToolset::IsPersistentPackageForShutdown(GetTransientPackage()));
+
+    UPackage* Fixture = CreatePackage(TEXT("/Game/CotSLifecycleFixture"));
+    Fixture->SetDirtyFlag(true);
+    const TArray<FString> DirtyPackages = UCotSLifecycleToolset::GetPersistentDirtyPackagePaths();
+    TestTrue(TEXT("Persistent dirty package is reported for shutdown refusal"), DirtyPackages.Contains(TEXT("/Game/CotSLifecycleFixture")));
+    Fixture->SetDirtyFlag(false);
     return true;
 }
 
