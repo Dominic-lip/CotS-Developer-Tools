@@ -36,6 +36,8 @@ Stable result structures, diagnostics, asset addressing, transactions, validatio
 ### 3. Domain toolsets
 Inspection, Assets, Blueprint, Animation, MetaHuman, World, Data, Validation, Testing and later Shardlands migration.
 
+Each domain begins as an interface under `UnrealPlugin/CotSDeveloperTools/Source/CotSDeveloperTools/Public/Domains`. Domain toolsets depend on Core/common facilities and must not form dependencies on other domains.
+
 ### 4. Task orchestration
 Markdown task specifications are intentionally client-neutral. `Scripts/Run-CotSTask.ps1` starts either Codex or Claude with the same specification.
 
@@ -56,6 +58,16 @@ A mature mutating tool should be able to return equivalent information to:
 ```
 
 The exact MCP schema may evolve, but the semantic contract should remain stable.
+
+The foundation implementation additionally emits `operation_id`, `status`, `schema_version`, `affected_object_paths`, and `error_details` (`code` and `message`). `changed_objects` remains for compatibility with the original schema. Tools return this envelope as JSON text, so it is machine-readable through both direct MCP registration and tool-search dispatch.
+
+## Mutation convention
+
+Future mutating tools validate and enumerate their impact before opening a transaction. They accept a dry-run/preview mode where practical, open `FCotSEditorMutationScope` only for a real mutation, call `Modify()` on every changed UObject, and return every affected object path in the shared result envelope. Repeatable operations should detect an already-satisfied desired state and report it without creating duplicate content.
+
+## MCP registration
+
+UE 5.8 registers a `UToolsetDefinition` with `UToolsetRegistry::RegisterToolsetClass`. Its static `UFUNCTION(meta=(AICallable))` methods become tool definitions. The installed `ModelContextProtocolEditor` module observes Toolset Registry registration and adapts the toolset into MCP; with tool search enabled it is available via `list_toolsets`, `describe_toolset`, and `call_tool`, otherwise it is exposed directly in `tools/list`. `UCotSFoundationToolset::GetStatus` is the deliberately minimal registration proof.
 
 ## Safety model
 Inspection is broadly allowed. Mutation is scoped. Bulk/destructive operations should expose impact before execution. Shardlands is read-only by policy until a task explicitly opts in. Git is a safety net, not permission to destroy work.

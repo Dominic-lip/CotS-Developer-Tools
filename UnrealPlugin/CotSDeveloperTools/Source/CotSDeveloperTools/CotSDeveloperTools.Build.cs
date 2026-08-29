@@ -17,7 +17,9 @@ public class CotSDeveloperTools : ModuleRules
             "Engine",
             "UnrealEd",
             "AssetRegistry",
-            "Projects"
+            "Projects",
+            "Json",
+            "ToolsetRegistry"
         });
     }
 }

@@ -14,11 +14,8 @@ public:
     virtual void ShutdownModule() override;
 
 private:
-    void HandleStatusCommand();
-    void HandleListAssetsCommand(const TArray<FString>& Args);
-    void HandleInspectAssetCommand(const TArray<FString>& Args);
+    void RegisterFoundationToolset();
 
-    IConsoleObject* StatusCommand = nullptr;
-    IConsoleObject* ListAssetsCommand = nullptr;
-    IConsoleObject* InspectAssetCommand = nullptr;
+    FDelegateHandle PostEngineInitHandle;
+    bool bFoundationToolsetRegistered = false;
 };
