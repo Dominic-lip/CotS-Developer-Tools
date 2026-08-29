@@ -11,3 +11,24 @@ If the lifecycle tool refuses its safety preconditions, `CloseToolLab` returns t
 The controller does not accept shell text, executable paths, arbitrary command arguments, filesystem paths, or target PIDs. Build and test commands are fixed to the canonical build script and the `CotS` automation invocation with the in-memory DDC workaround. Local lock/checkpoint state is intentionally ignored.
 
 Typical agent sequence: acquire a stable agent ID, close ToolLab, build, run tests, open, wait for `http://127.0.0.1:8000/mcp`, use native Unreal MCP for inspection/mutation, close when finished, then release the lock. Do not use this controller to evade the repository's broader single-mutating-agent policy.
+
+## Persistent Codex supervisor (TASK-008B)
+
+`Scripts\Launch-CotS-Agents.bat` starts `CotSAgentSupervisor.py` by default;
+pass `manual` only for an intentionally interactive Codex CLI. The supervisor
+owns Codex App Server, stores a durable thread/checkpoint in `.cots`, and sends
+the required continuation prompt after each completed turn. It stops only for a
+structured human gate, completion, failure, or usage-reset state.
+
+It uses App Server's `auto_review` approval reviewer with granular approval
+settings. Routine workspace work does not wait for a human approval; permission
+expansion and MCP elicitation remain risk-reviewed. Autonomous Git completion
+must use `Scripts\CotS-GitCompletion.py`, which allows status/diff checks and a
+validated exact-file commit followed only by `git push origin main`. Reset,
+clean, force-push, history rewrite, arbitrary process commands, and access
+outside this repository remain outside the autonomous approval boundary.
+If Git metadata is unavailable inside App Server's workspace sandbox, only the
+exact fixed completion wrapper may request a supported escalation, and its
+`auto_review` decision remains the sole approval path. The granular sandbox and
+rule channels exist only to let that reviewer assess this wrapper request; they
+do not authorize arbitrary commands.
