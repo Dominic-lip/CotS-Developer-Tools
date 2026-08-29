@@ -4,6 +4,7 @@
 #include "Inspection/CotSInspectionToolset.h"
 #include "Lifecycle/CotSLifecycleToolset.h"
 #include "Mutation/CotSMutationToolset.h"
+#include "Validation/CotSValidationToolset.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Curves/CurveFloat.h"
 #include "Misc/AutomationTest.h"
@@ -170,6 +171,15 @@ bool FCotSLifecyclePreflightTest::RunTest(const FString& Parameters)
     const TArray<FString> DirtyPackages = UCotSLifecycleToolset::GetPersistentDirtyPackagePaths();
     TestTrue(TEXT("Persistent dirty package is reported for shutdown refusal"), DirtyPackages.Contains(TEXT("/Game/CotSLifecycleFixture")));
     Fixture->SetDirtyFlag(false);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCotSValidationRegistrationTest, "CotS.Validation.ToolRegistration", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FCotSValidationRegistrationTest::RunTest(const FString& Parameters)
+{
+    TestTrue(TEXT("Validation toolset is registered"), UToolsetRegistry::IsToolsetClassRegistered(UCotSValidationToolset::StaticClass()));
+    const FString Schema = UToolsetRegistry::GetToolsetJsonSchema(UCotSValidationToolset::StaticClass());
+    TestTrue(TEXT("Validation schema exposes exact asset and folder validation"), Schema.Contains(TEXT("ValidateAsset")) && Schema.Contains(TEXT("ValidateFolder")));
     return true;
 }
 
