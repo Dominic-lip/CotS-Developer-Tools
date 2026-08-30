@@ -157,10 +157,10 @@ class NullStatusBusIO(unittest.TestCase):
 
 class TestRoadmapCompletionState(unittest.TestCase):
     def test_checked_in_state_schedules_earliest_unverified_foundation_task(self):
-        self.assertEqual(sup.next_required_task(), "TASK-004")
+        self.assertEqual(sup.next_required_task(), "TASK-006")
         verified, reason = sup.foundation_completion_decision()
         self.assertFalse(verified)
-        self.assertEqual(reason, "Foundation gate outstanding: TASK-004")
+        self.assertEqual(reason, "Foundation gate outstanding: TASK-006")
 
     def test_malformed_or_incomplete_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -171,7 +171,7 @@ class TestRoadmapCompletionState(unittest.TestCase):
 
     def test_unverified_complete_marker_has_a_scheduler_instruction(self):
         instruction = sup.scheduled_task_instruction()
-        self.assertIn("TASK-004", instruction)
+        self.assertIn("TASK-006", instruction)
         self.assertIn("durable evidence", instruction)
 
     def test_provider_self_validation_rule_uses_the_active_adapter(self):
@@ -603,6 +603,51 @@ class TestTaskReconciliation(NullStatusBusIO):
 
     def test_provider_neutral_task_owner(self):
         self.assertEqual(sup.supervisor_task_owner("TASK-012"), "supervisor-task-012")
+
+
+class TestEfficiencyCheckpoint(unittest.TestCase):
+    def test_compact_context_survives_handoff_prompt_without_history(self):
+        state = {"task": "TASK-107", "phase": "IMPLEMENTATION", "compact_task_context": {
+            "task_id": "TASK-107", "objective": "Build objective", "next_actions": ["targeted test"],
+            "files_relevant": ["Scripts/example.py"], "validation_passed": ["focused test"],
+        }}
+        prompt = sup.build_continue_prompt("claude", state)
+        self.assertIn('"task_id":"TASK-107"', prompt)
+        self.assertIn("Inspect source only where needed", prompt)
+        self.assertNotIn("checked-in roadmap completion state schedules", prompt)
+
+    def test_changed_context_replaces_cached_summary(self):
+        prior = {"objective": "old", "read_fingerprints": [{"path": "a.py", "summary": "old"}]}
+        merged = sup.merge_compact_context(prior, {"objective": "new", "read_fingerprints": [{"path": "a.py", "fingerprint": "new", "summary": "new"}]}, "TASK-107", "TEST")
+        self.assertEqual(merged["objective"], "new")
+        self.assertEqual(merged["read_fingerprints"][0]["summary"], "new")
+
+    def test_changed_file_invalidates_cached_summary(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(sup, "REPO", Path(directory)):
+            target = Path(directory) / "a.py"
+            target.write_text("old", encoding="utf-8")
+            old = sup.path_fingerprint("a.py")
+            target.write_text("new contents", encoding="utf-8")
+            context = sup.invalidate_changed_read_summaries({"read_fingerprints": [{"path": "a.py", "fingerprint": old, "summary": "stale"}]})
+            self.assertNotIn("summary", context["read_fingerprints"][0])
+            self.assertTrue(context["read_fingerprints"][0]["changed"])
+
+    def test_context_parser_rejects_non_json_and_bounds_lists(self):
+        self.assertEqual(sup.parse_compact_context("SUPERVISOR_CONTEXT: nope"), {})
+        text = "SUPERVISOR_CONTEXT: " + json.dumps({"next_actions": list(range(20))})
+        self.assertEqual(len(sup.parse_compact_context(text)["next_actions"]), 12)
+
+    def test_duplicate_failure_stops_blind_retry(self):
+        state = {"task": "TASK-107", "phase": "TEST"}
+        _, first = sup.record_failure(state, "build", "same error", ["a.py"])
+        _, second = sup.record_failure(state, "build", "same error", ["a.py"])
+        self.assertFalse(first)
+        self.assertTrue(second)
+        self.assertEqual(state["efficiency"]["repeated_failure_count"], 1)
+
+    def test_efficiency_context_is_truthful_when_agent_omits_read_data(self):
+        merged = sup.merge_compact_context({}, {}, "TASK-107", "IMPLEMENTATION")
+        self.assertNotIn("read_fingerprints", merged)
 
 
 class TestHostLockTransfer(unittest.TestCase):

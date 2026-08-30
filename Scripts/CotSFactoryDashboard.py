@@ -126,6 +126,11 @@ def render_lines(snapshot: dict[str, Any], spinner_index: int = 0, width: int | 
         row(_agent_line("Codex", checkpoint.get("codex") or {}, inner)),
         row(_agent_line("Claude", checkpoint.get("claude") or {}, inner)),
         bottom,
+        top("Efficiency"),
+        row(f"Task turns {((checkpoint.get('efficiency') or {}).get('task_turns', checkpoint.get('turn_count', 0)))}    New reads {((checkpoint.get('efficiency') or {}).get('files_newly_read_this_turn', 0))}    Unchanged rereads {((checkpoint.get('efficiency') or {}).get('files_reread_unchanged', 0))}"),
+        row(f"Targeted tests {((checkpoint.get('efficiency') or {}).get('targeted_test_runs', 0))}    Full suites {((checkpoint.get('efficiency') or {}).get('full_suite_runs', 0))}    Repeated failures {((checkpoint.get('efficiency') or {}).get('repeated_failure_count', 0))}"),
+        row(f"Context {((checkpoint.get('efficiency') or {}).get('checkpoint_context_size', 0))} bytes    Turn elapsed {format_elapsed(float((checkpoint.get('efficiency') or {}).get('current_turn_elapsed_ms', 0)) / 1000)}"),
+        bottom,
         top("Repository"),
         row(f"{snapshot.get('git_branch', '?')} · {snapshot.get('git_status', '?')} · {snapshot.get('last_commit', '?')}"),
     ]

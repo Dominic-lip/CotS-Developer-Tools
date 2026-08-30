@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
 import http.client
 import json
 import msvcrt
@@ -140,7 +141,12 @@ SUPERVISOR_GATE_REASON: <exact observed reason>
 SUPERVISOR_RECOMMENDED_ACTION: <bounded repair action>
 Also emit, each on its own line whenever known, SUPERVISOR_TASK: <task id>
 and SUPERVISOR_PHASE: <short current phase>. Do not stop for routine
-reporting."""
+reporting. Before the outcome marker emit one compact single-line JSON object:
+SUPERVISOR_CONTEXT: {"task_id":"TASK-...","task_title":"...","phase":"...","objective":"...","acceptance_remaining":["..."],"decisions_made":["..."],"files_changed":["..."],"files_relevant":["..."],"commands_tests_already_run":["..."],"validation_passed":["..."],"current_blocker":"...","next_actions":["..."],"donor_decisions":["..."],"commit_head":"...","lease_state":"...","read_fingerprints":[{"path":"...","fingerprint":"...","purpose":"...","summary":"..."}],"targeted_tests_run":0,"full_suites_run":0,"reason_for_full_suite":"..."}
+Keep it factual, bounded, and omit unknown fields. Work in coherent chunks:
+reconcile only changed facts, implement, run the smallest relevant validation,
+inspect the result, checkpoint, then continue. Do not re-run durable evidence
+unless relevant source or its acceptance contract changed."""
 
 PROVIDER_SELF_VALIDATION_RULE = """When an acceptance criterion requires a
 provider to perform an action and that provider is the active supervisor
@@ -176,9 +182,9 @@ network operation.
 
 {MARKER_INSTRUCTIONS}"""
 
-CODEX_CONTINUE_TEMPLATE = """Continue autonomous CotS development from the current repository
-and checkpoint state. Reconcile actual state first.{checkpoint_facts} Continue the
-active task or next incomplete task. """ + MARKER_INSTRUCTIONS
+CODEX_CONTINUE_TEMPLATE = """Obey AGENTS.md. Continue from this structured checkpoint.
+Inspect source only where needed to verify the checkpoint or changed facts; do
+not reconstruct task history by default.{checkpoint_facts} """ + MARKER_INSTRUCTIONS
 
 CLAUDE_START = f"""Read and follow CLAUDE.md, then AGENTS.md and
 Docs/AUTONOMOUS_DEVELOPMENT.md. Work autonomously through the next incomplete
@@ -209,9 +215,9 @@ structured HANDOFF outcome instead of HUMAN_GATE.
 
 {MARKER_INSTRUCTIONS}"""
 
-CLAUDE_CONTINUE_TEMPLATE = """Continue autonomous CotS development from the current
-repository and checkpoint state. Reconcile actual state first.{checkpoint_facts} Continue the
-active task or next incomplete task. """ + MARKER_INSTRUCTIONS
+CLAUDE_CONTINUE_TEMPLATE = """Obey AGENTS.md. Continue from this structured checkpoint.
+Inspect source only where needed to verify the checkpoint or changed facts; do
+not reconstruct task history by default.{checkpoint_facts} """ + MARKER_INSTRUCTIONS
 
 
 def scheduled_task_instruction() -> str:
@@ -245,13 +251,14 @@ def build_continue_prompt(name: str, state: dict[str, Any]) -> str:
         facts.append(f"phase={phase}")
     if lease_owner and lease_owner not in ("none", None):
         facts.append(f"Host mutation lease owner={lease_owner}")
-    checkpoint_facts = (
-        f" The provider-neutral supervisor checkpoint (.cots/agent-supervisor.local.json) "
-        f"and active Tasks/*.md report: {', '.join(facts)}; verify this against the actual "
-        f"repository state before trusting it."
-    ) if facts else ""
+    context = invalidate_changed_read_summaries(compact_context(state))
+    if context:
+        facts.append("compact_context=" + json.dumps(context, separators=(",", ":"), ensure_ascii=True))
+    checkpoint_facts = "\n" + "\n".join(facts) if facts else "\nNo compact context exists yet; establish one once, then checkpoint it."
     template = CODEX_CONTINUE_TEMPLATE if name == "codex" else CLAUDE_CONTINUE_TEMPLATE
-    return template.format(checkpoint_facts=checkpoint_facts + scheduled_task_instruction())
+    # The marker contract includes literal JSON braces; replacement rather
+    # than str.format keeps those protocol examples literal.
+    return template.replace("{checkpoint_facts}", checkpoint_facts)
 
 CLAUDE_ALLOWED_TOOLS = (
     "Read Edit Write Grep Glob "
@@ -272,6 +279,7 @@ CLAUDE_ALLOWED_TOOLS = (
 
 TASK_PATTERN = re.compile(r"^SUPERVISOR_TASK:\s*(.+)$", re.MULTILINE)
 PHASE_PATTERN = re.compile(r"^SUPERVISOR_PHASE:\s*(.+)$", re.MULTILINE)
+CONTEXT_PATTERN = re.compile(r"^SUPERVISOR_CONTEXT:\s*(\{.*\})\s*$", re.MULTILINE)
 
 USAGE_LIMIT_PATTERNS = [
     re.compile(r"usage limit", re.IGNORECASE),
@@ -806,6 +814,105 @@ def parse_task_phase(text: str) -> tuple[str | None, str | None]:
         task_match.group(1).strip() if task_match else None,
         phase_match.group(1).strip() if phase_match else None,
     )
+
+
+COMPACT_CONTEXT_FIELDS = (
+    "task_id", "task_title", "phase", "objective", "acceptance_remaining",
+    "decisions_made", "files_changed", "files_relevant", "commands_tests_already_run",
+    "validation_passed", "current_blocker", "next_actions", "donor_decisions",
+    "commit_head", "lease_state", "read_fingerprints", "targeted_tests_run",
+    "full_suites_run", "reason_for_full_suite",
+)
+
+
+def _bounded(value: Any, limit: int = 12) -> Any:
+    if isinstance(value, str):
+        return value[:600]
+    if isinstance(value, list):
+        return [_bounded(item, limit) for item in value[:limit]]
+    if isinstance(value, dict):
+        return {str(key)[:80]: _bounded(item, limit) for key, item in list(value.items())[:limit]}
+    return value
+
+
+def compact_context(state: dict[str, Any]) -> dict[str, Any]:
+    """Return the bounded provider handoff context; never conversational history."""
+    raw = state.get("compact_task_context")
+    if not isinstance(raw, dict):
+        return {}
+    return {field: _bounded(raw[field]) for field in COMPACT_CONTEXT_FIELDS if field in raw}
+
+
+def path_fingerprint(path: str) -> str | None:
+    """Cheap changed-source detector; content is read only when genuinely needed."""
+    try:
+        candidate = (REPO / path).resolve()
+        if REPO not in candidate.parents or not candidate.is_file():
+            return None
+        stat = candidate.stat()
+        return f"mtime_ns:{stat.st_mtime_ns}:size:{stat.st_size}"
+    except OSError:
+        return None
+
+
+def invalidate_changed_read_summaries(context: dict[str, Any]) -> dict[str, Any]:
+    """Never hand a provider a cached source summary after its file changed."""
+    result = dict(context)
+    entries = []
+    for item in context.get("read_fingerprints", []):
+        if not isinstance(item, dict):
+            continue
+        entry = dict(item)
+        current = path_fingerprint(str(entry.get("path", "")))
+        recorded = entry.get("fingerprint")
+        if current and recorded and current != recorded:
+            entry.pop("summary", None)
+            entry["changed"] = True
+        entries.append(entry)
+    if entries:
+        result["read_fingerprints"] = entries
+    return result
+
+
+def parse_compact_context(text: str) -> dict[str, Any]:
+    """Accept only the documented one-line JSON checkpoint shape."""
+    match = CONTEXT_PATTERN.search(text)
+    if not match:
+        return {}
+    try:
+        value = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {field: _bounded(value[field]) for field in COMPACT_CONTEXT_FIELDS if field in value}
+
+
+def merge_compact_context(previous: dict[str, Any], incoming: dict[str, Any], task: str | None, phase: str | None) -> dict[str, Any]:
+    """Preserve useful prior facts when an agent checkpoint omits them."""
+    merged = compact_context({"compact_task_context": previous})
+    merged.update(incoming)
+    if task:
+        merged["task_id"] = task
+    if phase:
+        merged["phase"] = phase
+    return {field: _bounded(merged[field]) for field in COMPACT_CONTEXT_FIELDS if field in merged}
+
+
+def record_failure(state: dict[str, Any], operation: str, error: str, paths: list[str] | None = None) -> tuple[dict[str, Any], bool]:
+    """Fingerprint an operational failure and tell callers when retry must stop."""
+    material = "|".join((operation, error[:400], ",".join(sorted(paths or [])), str(state.get("task")), str(state.get("phase"))))
+    fingerprint = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+    failures = dict(state.get("failure_fingerprints") or {})
+    entry = dict(failures.get(fingerprint) or {})
+    entry["count"] = int(entry.get("count", 0)) + 1
+    entry.update({"operation": operation, "error": error[:600], "paths": paths or []})
+    failures[fingerprint] = entry
+    state["failure_fingerprints"] = failures
+    efficiency = dict(state.get("efficiency") or {})
+    efficiency["repeated_failure_count"] = sum(max(0, int(item.get("count", 0)) - 1) for item in failures.values() if isinstance(item, dict))
+    state["efficiency"] = efficiency
+    return state, entry["count"] >= 2
 
 
 def codex_app_settings(developer_instructions: str) -> dict[str, Any]:
@@ -1993,6 +2100,11 @@ def main() -> int:
                                 # Unknown/system failure: never silently CONTINUING.
                                 bus.update(state="FAILED", event=f"{active_name.capitalize()} turn failed: {failure}")
                                 return 1
+                            state, duplicate_failure = record_failure(bus.data, "provider_turn", str(failure))
+                            if duplicate_failure:
+                                bus.update(state="FAILED", failure=f"duplicate failure requires diagnosis: {failure}",
+                                           event=f"{active_name.capitalize()} repeated identical failure; stopping blind retry")
+                                return 1
                             retries = transient_retries if isinstance(failure, TurnFailed) else transport_retries
                             limit = MAX_TRANSIENT_RETRIES if isinstance(failure, TurnFailed) else MAX_TRANSPORT_RETRIES
                             if retries >= limit:
@@ -2019,6 +2131,22 @@ def main() -> int:
                         transport_retries = 0
                         kind, detail = turn_outcome(result.text)
                         task, phase = parse_task_phase(result.text)
+                        context = parse_compact_context(result.text)
+                        merged_context = merge_compact_context(
+                            bus.data.get("compact_task_context", {}), context,
+                            task or bus.data.get("task"), phase or bus.data.get("phase"),
+                        )
+                        efficiency = dict(bus.data.get("efficiency") or {})
+                        efficiency["task_turns"] = int(efficiency.get("task_turns", 0)) + 1
+                        efficiency["provider_turns"] = dict(efficiency.get("provider_turns") or {})
+                        efficiency["provider_turns"][active_name] = int(efficiency["provider_turns"].get(active_name, 0)) + 1
+                        efficiency["current_turn_elapsed_ms"] = result.duration_ms
+                        efficiency["checkpoint_context_size"] = len(json.dumps(merged_context, separators=(",", ":")))
+                        efficiency["targeted_test_runs"] = int(merged_context.get("targeted_tests_run", efficiency.get("targeted_test_runs", 0)) or 0)
+                        efficiency["full_suite_runs"] = int(merged_context.get("full_suites_run", efficiency.get("full_suite_runs", 0)) or 0)
+                        reads = merged_context.get("read_fingerprints", [])
+                        efficiency["files_newly_read_this_turn"] = len(reads) if context else 0
+                        efficiency["files_reread_unchanged"] = sum(1 for item in reads if isinstance(item, dict) and item.get("unchanged"))
                         new_ref = getattr(agent, session_ref_key, None)
                         state["turn_count"] = state.get("turn_count", 0) + 1
                         state[active_name] = {**state.get(active_name, {}), session_ref_key: new_ref}
@@ -2026,6 +2154,8 @@ def main() -> int:
                             turn_count=state["turn_count"],
                             task=task or bus.data.get("task"),
                             phase=phase or bus.data.get("phase"),
+                            compact_task_context=merged_context,
+                            efficiency=efficiency,
                             last_output=result.text[-8000:],
                             last_successful_gate=f"{time.strftime('%Y-%m-%d %H:%M:%S')} {active_name} turn completed ({kind})",
                             event=f"{active_name.capitalize()} turn completed ({kind})",

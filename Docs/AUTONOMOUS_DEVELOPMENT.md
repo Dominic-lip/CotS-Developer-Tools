@@ -24,6 +24,12 @@ status is not `COMPLETE_VERIFIED`, and stops for roadmap completion only when
 the checked-in state has durable evidence for every roadmap task. It otherwise
 stops only for a structured human gate, failure, or usage-reset state.
 
+Continuation prompts use the compact checkpoint described in
+`Docs/AUTONOMOUS_EFFICIENCY_POLICY.md`, not replayed transcripts. Agents save
+factual remaining acceptance, source/read fingerprints, tests, evidence, donor
+decisions and next action at completed-turn boundaries. The supervisor presents
+this bounded context on handoff and reconciles only a relevant changed delta.
+
 It uses App Server's `auto_review` approval reviewer with granular approval
 settings. Routine workspace work does not wait for a human approval; permission
 expansion and MCP elicitation remain risk-reviewed. Autonomous Git completion

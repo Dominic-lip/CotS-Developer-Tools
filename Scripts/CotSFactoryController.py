@@ -90,7 +90,7 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
-def tail(path: Path, limit: int = 8000) -> str:
+def tail(path: Path, limit: int = 2000) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")[-limit:]
     except OSError:
@@ -156,7 +156,15 @@ def choose_repair_agents(checkpoint: dict[str, Any]) -> str:
 
 
 def repair_prompt(evidence: dict[str, Any], attempt: int) -> str:
-    return """You are executing one bounded CotS infrastructure repair turn. Diagnose only the captured evidence below. Repair scope is C:\\Dev\\CotSDeveloperTools infrastructure only unless the original task explicitly permits more. Do not write Shardlands or CotS. Make the smallest coherent fix, run relevant tests, run py_compile for changed Python, run git diff --check, and commit only through Scripts/CotS-GitCompletion.py if validation passes. Do not claim success if validation fails. Preserve the original task/checkpoint and do not begin TASK-100. Return exactly these machine-readable lines at the end:\nSUPERVISOR_TASK: {task}\nSUPERVISOR_PHASE: factory-repair\nSUPERVISOR_OUTCOME: CONTINUE\n\nCAPTURED FACTORY EVIDENCE (attempt {attempt}/{maximum}):\n{payload}""".format(task=evidence.get("task") or "RECONCILING", attempt=attempt, maximum=MAX_REPAIR_ATTEMPTS, payload=json.dumps(evidence, indent=2)[-14000:])
+    bounded = {
+        "incident": {key: evidence.get(key) for key in ("category", "reason", "task", "phase", "git_head", "host_ready")},
+        "compact_checkpoint": (evidence.get("checkpoint") or {}).get("compact_task_context", {}),
+        "changed_files": [line for line in str(evidence.get("git_status", "")).splitlines()[:30]],
+        "recent_events": str(evidence.get("supervisor_events", ""))[-2000:],
+        "active_provider_tail": str(evidence.get("codex_protocol", "") if (evidence.get("checkpoint") or {}).get("active_agent") == "codex" else evidence.get("claude_protocol", ""))[-2000:],
+        "previous_attempts": attempt - 1,
+    }
+    return """You are executing one bounded CotS infrastructure repair turn. Diagnose outward from the exact incident below; do not re-audit the factory or reconstruct task history. Repair scope is C:\\Dev\\CotSDeveloperTools infrastructure only unless the original task explicitly permits more. Do not write Shardlands or CotS. Make the smallest coherent fix, run relevant tests, run py_compile for changed Python, run git diff --check, and commit only through Scripts/CotS-GitCompletion.py if validation passes. Do not claim success if validation fails. Preserve the original task/checkpoint and do not begin TASK-100. Return exactly these machine-readable lines at the end:\nSUPERVISOR_TASK: {task}\nSUPERVISOR_PHASE: factory-repair\nSUPERVISOR_OUTCOME: CONTINUE\n\nBOUNDED INCIDENT EVIDENCE (attempt {attempt}/{maximum}):\n{payload}""".format(task=evidence.get("task") or "RECONCILING", attempt=attempt, maximum=MAX_REPAIR_ATTEMPTS, payload=json.dumps(bounded, indent=2))
 
 
 class FactoryController:

@@ -47,6 +47,16 @@ For substantial tasks use this sequence:
 
 Do not claim success when a build/test was not actually run. Distinguish `implemented`, `compiled`, `tested`, and `verified in Unreal`.
 
+## Autonomous efficiency
+
+For autonomous work, maximize verified engineering progress per provider turn.
+Use `Docs/AUTONOMOUS_EFFICIENCY_POLICY.md`: work in coherent chunks, continue
+from the compact checkpoint, reconcile only changed facts, prefer targeted
+iteration validation, reuse still-valid durable evidence and donor decisions,
+and stop repeated identical failures for diagnosis. This never relaxes task
+acceptance, validation gates, existing-work-first inspection, Git/MCP safety or
+the single-mutating-agent rule.
+
 ## Unreal build execution safety
 - UnrealBuildTool writes and rotates diagnostics under `%LOCALAPPDATA%\UnrealBuildTool`. Some AI-agent sandboxes cannot write there even when they can edit the repository.
 - Use the canonical task-appropriate build entry point. `Scripts\Build-ToolLab.cmd` remains the Tool Lab build path; production tasks should establish and then use an equally deterministic CotS build path.

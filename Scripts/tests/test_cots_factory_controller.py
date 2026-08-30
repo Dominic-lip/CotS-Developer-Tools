@@ -56,6 +56,11 @@ class TestRecoveryPolicy(unittest.TestCase):
     def test_repair_prompt_requires_validation_and_preserves_task(self):
         prompt = factory.repair_prompt({"task": "TASK-001", "reason": "nested", "checkpoint": {}}, 2)
         self.assertIn("TASK-001", prompt); self.assertIn("py_compile", prompt); self.assertIn("CotS-GitCompletion.py", prompt); self.assertIn("Do not write Shardlands", prompt)
+
+    def test_repair_prompt_is_bounded_to_relevant_incident(self):
+        prompt = factory.repair_prompt({"task": "TASK-001", "reason": "broken", "checkpoint": {"compact_task_context": {"next_actions": ["fix"]}}, "codex_protocol": "x" * 9000}, 1)
+        self.assertIn("BOUNDED INCIDENT EVIDENCE", prompt)
+        self.assertLess(len(prompt), 8000)
     def test_bounded_attempts_escalate_without_repair(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory, "SUPERVISOR_STATE", Path(directory) / "supervisor.json"):
             checkpoint = {"state": "HUMAN_GATE", "human_gate": "nested `codex exec` cannot reach network", "task": "TASK-001"}
@@ -217,6 +222,13 @@ class TestFactoryDashboard(unittest.TestCase):
         recovered = self.snapshot(recovery={"state": "REPAIRING", "category": "RECOVERABLE_HOST_MCP", "incident": "abc", "attempt": 2, "reason": "host down"})
         rendered = dashboard.render_frame(recovered, width=90)
         self.assertIn("Recovery", rendered); self.assertIn("RECOVERABLE_HOST_MCP", rendered); self.assertIn("Attempt 2/3", rendered)
+
+    def test_efficiency_telemetry_renders_checkpoint_facts(self):
+        snapshot = self.snapshot()
+        snapshot["supervisor"]["efficiency"] = {"task_turns": 3, "files_newly_read_this_turn": 12, "files_reread_unchanged": 1, "targeted_test_runs": 5, "full_suite_runs": 0, "repeated_failure_count": 0}
+        rendered = dashboard.render_frame(snapshot, width=100)
+        self.assertIn("Efficiency", rendered)
+        self.assertIn("Targeted tests 5", rendered)
 
     def test_events_are_human_safe_and_bounded(self):
         rendered = dashboard.render_frame(self.snapshot(recent_events=["\x1b[31m{\"jsonrpc\":\"2.0\"}\nRaw" for _ in range(20)]), width=90)
