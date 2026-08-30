@@ -1,0 +1,15 @@
+{
+  "_provenance": "Captured live from the installed Claude Code 2.1.251 CLI on this machine: `claude -p \"Reply with exactly the single word: OK\" --output-format json --permission-mode bypassPermissions --allowedTools \"\"` run from C:\\Dev\\CotSDeveloperTools during the TASK-008C repair. Not synthesized.",
+  "duration_api_ms": 3812,
+  "stop_reason": "end_turn",
+  "session_id": "8b73f909-02df-4508-a1b4-a77b6dbd8e99",
+  "total_cost_usd": 0.044738200000000006,
+  "is_error": false,
+  "num_turns": 1,
+  "subtype": "success",
+  "api_error_status": null,
+  "result": "OK",
+  "type": "result",
+  "duration_ms": 3035,
+  "uuid": "4790fcce-5acc-486a-b01f-adfb01b53f1e"
+}

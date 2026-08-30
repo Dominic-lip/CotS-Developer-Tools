@@ -1,0 +1,11 @@
+{
+  "_provenance": "NOT captured live -- triggering a real Claude Code usage-limit response would require actually exhausting account quota, which this repair intentionally avoided. Field names/shapes (is_error, api_error_status, subtype, result, session_id, type) are the real, confirmed schema from Scripts/tests/fixtures/claude_success.json (captured live against the installed 2.1.251 CLI); only the error-path *values* here are representative, modeled on Anthropic's documented 429 usage-limit behavior. detect_usage_limit() does not require this exact subtype string -- it matches on the confirmed-real api_error_status field first, with text-pattern matching over the combined stdout/stderr as a fallback.",
+  "is_error": true,
+  "subtype": "error_during_execution",
+  "api_error_status": 429,
+  "session_id": "11111111-2222-3333-4444-555555555555",
+  "result": "Claude AI usage limit reached. Please try again at 4:22 AM.",
+  "type": "result",
+  "duration_ms": 812,
+  "num_turns": 0
+}

@@ -42,6 +42,11 @@ and non-disposable destructive work.
 `STARTING`, `PREFLIGHT`, `RUNNING_TURN`, `CONTINUING`,
 `WAITING_FOR_USAGE_RESET`, `HUMAN_GATE`, `COMPLETE`, and `FAILED` are persisted.
 The state file enables resumption after a terminal closure, reboot, crash, or
-usage reset. The supervisor remains a single mutating-agent owner; a future
-Claude adapter can implement the same state/checkpoint contract but must acquire
-the same lease before any mutation.
+usage reset. The supervisor remains a single mutating-agent owner.
+
+`Tasks/008C_SUPERVISOR_DASHBOARD.md` supersedes two things described above: it
+adds a live console dashboard, and it adds a Claude adapter that shares this
+lease/checkpoint contract. It also changes `WAITING_FOR_USAGE_RESET` from a
+process-exit state into a polling-and-retry state — the supervisor now rotates
+to the other configured provider, or waits and rechecks, rather than exiting
+whenever a usage limit is reached.

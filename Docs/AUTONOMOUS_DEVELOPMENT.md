@@ -32,3 +32,70 @@ exact fixed completion wrapper may request a supported escalation, and its
 `auto_review` decision remains the sole approval path. The granular sandbox and
 rule channels exist only to let that reviewer assess this wrapper request; they
 do not authorize arbitrary commands.
+
+## Live dashboard and Codex/Claude rotation (TASK-008C)
+
+The supervisor console redraws a fixed-size status summary in place — active
+agent, preferred agent, current task/phase, turn count, both providers'
+availability, ToolLab/Unreal MCP/Host MCP state, the mutation lease owner, Git
+branch/status/last commit, and a bounded recent-events list. It never prints
+raw protocol JSON to the console. Detailed traffic goes to
+`.cots/codex-protocol.log` and `.cots/claude-protocol.log`; summarized events
+go to `.cots/supervisor-events.log`.
+
+`ClaudeAgent` drives `claude -p --output-format json`, resumed by
+`--resume <session_id>`, with `--allowedTools` fixed to
+`Read Edit Write Grep Glob` plus the same two shell invocations Codex is
+allowed (`Scripts\CotS-GitCompletion.py`, `Scripts\Build-ToolLab.cmd`) — it
+cannot run any other shell command. `--permission-mode bypassPermissions` is
+safe here specifically because that tool allowlist, not a human approval
+prompt, is the actual safety boundary; a non-interactive `-p` session has no
+one to answer an approval prompt anyway.
+
+When the active provider reports a usage/rate limit, the supervisor stops
+submitting it further turns, records the reset time when known, saves the
+checkpoint, and rotates to the other configured provider if one is usable.
+Only when neither provider is currently usable does it enter
+`WAITING_FOR_AGENT_CAPACITY` (or, with a single configured provider,
+`WAITING_FOR_USAGE_RESET`) and poll on a bounded interval — it does not exit
+the process for this. Exit is reserved for `HUMAN_GATE`, `COMPLETE`, `FAILED`,
+or an operator's Ctrl+C. Rotation always fully closes the previous provider's
+process before the next one starts a turn; two mutating agents are never live
+at once.
+
+`Scripts\Launch-CotS-Agents.bat` opens one visible window (`cmd /k`, not
+minimized) so an operator can read supervisor state without inspecting
+PowerShell output or the checkpoint JSON directly. Ctrl+C requests a
+controlled shutdown: the in-flight turn is allowed to finish, the checkpoint
+is saved, the owned Codex/Claude subprocess is closed, and this process's own
+supervisor instance lease is released. It never forces a release of the
+ToolLab mutation lock it does not itself own; that remains the acting agent's
+own responsibility to reconcile on its next turn.
+
+### Usage-limit detection, failed-turn classification, and the hot-loop breaker
+
+Codex usage exhaustion is classified from the real Codex 0.151.0 App Server
+protocol (`.cots/codex-protocol.log`): a standalone `error` notification and/or
+a `turn/completed` with `status: "failed"`, both carrying
+`codexErrorInfo: "usageLimitExceeded"`. `account/rateLimits/updated`'s
+`rateLimitReachedType` is consulted for forward compatibility but is not
+required — it is `null` even mid-exhaustion on some accounts, so it is never
+the sole detection path. Claude Code's `-p --output-format json` usage-limit
+detection uses the confirmed real `api_error_status` field (429/529), with
+text-pattern matching over stdout/stderr as a fallback.
+
+A failed turn is never assumed to be `CONTINUING` merely because it produced
+no assistant text: it is classified as usage exhaustion (rotate), a known
+transient/transport failure (bounded retry with backoff), or an unknown
+failure (`FAILED`, terminal). Separately, a hot-loop circuit breaker tracks
+consecutive suspicious turns per provider (near-instant, no assistant text,
+no recorded tool/item activity); three in a row trips `STALLED_PROVIDER`,
+which is gated and rotated exactly like `USAGE_EXHAUSTED` but with a short
+fixed backoff instead of a provider-reported reset time.
+
+Task/phase are reconciled from the strongest available evidence rather than
+staying `(unknown)` indefinitely: a `SUPERVISOR_TASK`/`SUPERVISOR_PHASE`
+marker already parsed from a turn is authoritative; otherwise the Host
+mutation-lease owner's `<agent>-task-<n>` naming convention is used as a
+fallback (e.g. `codex-task-012` -> `TASK-012`); otherwise the dashboard shows
+the explicit `RECONCILING` state rather than inventing a value.

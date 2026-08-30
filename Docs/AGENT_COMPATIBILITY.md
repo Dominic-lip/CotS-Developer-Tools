@@ -14,6 +14,15 @@ The CotS toolchain must not depend on one AI vendor. Codex and Claude Code are f
 - Tool names that assume a specific model/vendor.
 - Agent-specific output formats where a shared JSON/MCP schema works.
 
+## Persistent supervisor
+
+`Scripts\CotSAgentSupervisor.py` (`Tasks/008B_PERSISTENT_AGENT_SUPERVISOR.md`,
+`Tasks/008C_SUPERVISOR_DASHBOARD.md`) drives both Codex and Claude through the
+same checkpoint/lease contract and rotates between them automatically when one
+hits a usage limit. It is the reference example of an agent-neutral
+orchestration loop: `CodexAgent` and `ClaudeAgent` implement the same
+`activate` / `run_turn` / `deactivate` shape.
+
 ## Compatibility gate
 A foundation capability is not considered complete until either:
 1. both Codex and Claude can invoke it successfully; or
