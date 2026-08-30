@@ -44,6 +44,12 @@ TURN_TIMEOUT_SECONDS = 2 * 60 * 60
 UPDATE_TIMEOUT_SECONDS = 120
 CAPACITY_RECHECK_SECONDS = 300
 AVAILABILITY_PROBE_RECHECK_SECONDS = 60
+# A provider that reports usage exhaustion without an actual reset timestamp
+# must not become a permanent human gate.  Probe it harmlessly after five
+# minutes, then back off 10m, 20m and finally 30m between continued unknown
+# exhaustion responses.  These are availability probes only, never task turns.
+UNKNOWN_RESET_INITIAL_PROBE_SECONDS = 5 * 60
+UNKNOWN_RESET_MAX_PROBE_SECONDS = 30 * 60
 MAX_RECENT_EVENTS = 10
 DASHBOARD_REFRESH_SECONDS = 1.0
 EXTERNAL_PROBE_SECONDS = 5.0
@@ -1411,6 +1417,12 @@ def format_reset(reset_at: float | None) -> str:
     return f"{when} (in {hours}h{minutes:02d}m)"
 
 
+def format_probe_time(probe_at: float | None) -> str:
+    if not probe_at:
+        return "pending schedule"
+    return time.strftime("%H:%M:%S", time.localtime(probe_at))
+
+
 DEFAULT_FRAME_WIDTH = 78
 MAX_LINE_LENGTH = 240  # generous hard cap so one runaway field cannot desync line count
 
@@ -1431,6 +1443,8 @@ def render_frame_lines(snapshot: dict[str, Any]) -> list[str]:
         reset_at = info.get("reset_at")
         if status in ("USAGE_EXHAUSTED", "STALLED_PROVIDER") or reset_at:
             result.append(f"         reset={format_reset(reset_at)}")
+        if status == "USAGE_EXHAUSTED" and reset_at is None:
+            result.append(f"         next availability probe: {format_probe_time(info.get('next_availability_probe_at'))}")
         return result
 
     state = snapshot.get("state", "STARTING")
@@ -1530,43 +1544,94 @@ def is_agent_usable(info: dict[str, Any], configured: bool) -> bool:
 
 
 def provider_due_for_probe(info: dict[str, Any], now: float | None = None) -> bool:
-    """Whether an exhausted/stalled provider's recorded cooldown has elapsed
-    and it has not been probed recently. An expired estimate is only a cue to
-    probe, never proof of capacity."""
+    """Whether a reset-gated provider is due for one harmless probe.
+
+    Known resets preserve the existing elapsed-reset plus recheck-interval
+    behaviour.  Unknown usage resets use their persisted next-probe deadline;
+    old checkpoints with no deadline are intentionally eligible immediately
+    so this recovery fix also repairs already-stuck supervisors.
+    """
     now = time.time() if now is None else now
     if info.get("status") not in ("USAGE_EXHAUSTED", "STALLED_PROVIDER", "ELIGIBLE_FOR_PROBE"):
         return False
     reset_at = info.get("reset_at")
-    if reset_at is None or reset_at > now:
+    if reset_at is None:
+        return info.get("next_availability_probe_at") is None or info["next_availability_probe_at"] <= now
+    if reset_at > now:
         return False
     last_probe = info.get("last_availability_probe_at") or 0
     return now - last_probe >= AVAILABILITY_PROBE_RECHECK_SECONDS
 
 
+def unknown_reset_probe_delay(attempts: int) -> float:
+    """Bounded conservative backoff after an unknown-reset probe fails."""
+    return min(UNKNOWN_RESET_INITIAL_PROBE_SECONDS * (2 ** max(0, attempts)), UNKNOWN_RESET_MAX_PROBE_SECONDS)
+
+
+def schedule_unknown_reset_probe(info: dict[str, Any], now: float, *, failed_probe: bool) -> dict[str, Any]:
+    """Return persisted unknown-reset recovery fields without issuing work."""
+    attempts = int(info.get("availability_probe_attempts") or 0)
+    if failed_probe:
+        attempts += 1
+        delay = unknown_reset_probe_delay(attempts)
+    else:
+        attempts = 0
+        delay = UNKNOWN_RESET_INITIAL_PROBE_SECONDS
+    return {
+        "reset_at": None,
+        "availability_probe_attempts": attempts,
+        "next_availability_probe_at": now + delay,
+    }
+
+
+def capacity_recheck_wait_seconds(checkpoint: dict[str, Any], configured: set[str], now: float | None = None) -> float:
+    """Wake capacity waiting at the earliest meaningful recovery deadline."""
+    now = time.time() if now is None else now
+    waits = [float(CAPACITY_RECHECK_SECONDS)]
+    for name in configured:
+        info = checkpoint.get(name, {})
+        if info.get("status") not in ("USAGE_EXHAUSTED", "STALLED_PROVIDER", "ELIGIBLE_FOR_PROBE"):
+            continue
+        reset_at = info.get("reset_at")
+        if reset_at is not None:
+            waits.append(max(0.0, reset_at - now))
+        elif info.get("next_availability_probe_at") is not None:
+            waits.append(max(0.0, info["next_availability_probe_at"] - now))
+    return min(waits)
+
+
 def refresh_provider_availability(
     bus: StatusBus, instances: dict[str, Any], names: list[str] | None = None,
 ) -> set[str]:
-    """At a safe boundary, probe only providers whose observed reset has
-    passed. Returns providers that proved a real harmless turn can start and
-    complete. Failures retain a truthful exhausted/stalled state and a bounded
-    recheck timestamp, avoiding probe spam."""
+    """At a safe boundary, issue only due harmless availability probes.
+
+    Unknown reset responses persist a bounded recovery schedule; no path here
+    launches a real task turn until a probe has proved the provider READY.
+    """
     recovered: set[str] = set()
     now = time.time()
     for name in names or list(instances):
         info = bus.data.get(name, {})
         if name not in instances or not provider_due_for_probe(info, now):
             continue
-        bus.update(event=f"{name.capitalize()} reset elapsed; eligible for availability probe",
+        probe_reason = "unknown reset recovery due" if info.get("reset_at") is None else "reset elapsed"
+        bus.update(event=f"{name.capitalize()} {probe_reason}; eligible for availability probe",
                    **{name: {**info, "status": "ELIGIBLE_FOR_PROBE"}})
         bus.update(event=f"{name.capitalize()} probing availability",
                    **{name: {**bus.data.get(name, {}), "status": "PROBING_AVAILABILITY", "last_availability_probe_at": now}})
         try:
             instances[name].probe_availability()
         except UsageResetRequired as error:
+            latest = bus.data.get(name, {})
+            unknown_fields = (
+                schedule_unknown_reset_probe(latest, time.time(), failed_probe=True)
+                if error.reset_at is None else
+                {"availability_probe_attempts": 0, "next_availability_probe_at": None}
+            )
             bus.update(event=f"{name.capitalize()} availability probe still exhausted",
-                       **{name: {**bus.data.get(name, {}), "status": error.status_label,
+                       **{name: {**latest, "status": error.status_label,
                                   "reset_at": error.reset_at, "last_error": str(error),
-                                  "last_availability_probe_at": time.time()}})
+                                  "last_availability_probe_at": time.time(), **unknown_fields}})
         except (AppServerError, TurnFailed, TimeoutError) as error:
             # The reset estimate was consumed, but a failed probe is not a
             # license to submit task turns. Keep the temporary backoff honest.
@@ -1577,7 +1642,8 @@ def refresh_provider_availability(
         else:
             bus.update(event=f"{name.capitalize()} availability probe succeeded",
                        **{name: {**bus.data.get(name, {}), "status": "READY", "reset_at": None,
-                                  "last_error": None, "last_availability_probe_at": time.time()}})
+                                  "last_error": None, "last_availability_probe_at": time.time(),
+                                  "availability_probe_attempts": 0, "next_availability_probe_at": None}})
             recovered.add(name)
     return recovered
 
@@ -1842,9 +1908,16 @@ def main() -> int:
                 except UsageResetRequired as error:
                     status_label = getattr(error, "status_label", "USAGE_EXHAUSTED")
                     verb = "hot-loop detected" if status_label == "STALLED_PROVIDER" else "usage limit reached"
+                    prior_provider = bus.data.get(active_name, {})
+                    unknown_fields = (
+                        schedule_unknown_reset_probe(prior_provider, time.time(), failed_probe=False)
+                        if status_label == "USAGE_EXHAUSTED" and error.reset_at is None else
+                        {"availability_probe_attempts": 0, "next_availability_probe_at": None}
+                    )
                     bus.update(
                         event=f"{active_name.capitalize()} {verb}: {error}",
-                        **{active_name: {**bus.data.get(active_name, {}), "status": status_label, "reset_at": error.reset_at, "last_error": str(error)}},
+                        **{active_name: {**prior_provider, "status": status_label, "reset_at": error.reset_at,
+                                         "last_error": str(error), **unknown_fields}},
                     )
                 finally:
                     agent.deactivate()
@@ -1885,10 +1958,11 @@ def main() -> int:
                             next_name = pick_ready(active_name)
                         if next_name is not None:
                             break
-                        # Conservative bounded poll: previously min(...,30) made this
-                        # effectively ignore CAPACITY_RECHECK_SECONDS and always
-                        # busy-poll every 30s regardless of the configured interval.
-                        shutdown_event.wait(CAPACITY_RECHECK_SECONDS)
+                        # Wake promptly for either a provider's known reset,
+                        # its unknown-reset availability-probe deadline, or
+                        # the regular capacity recheck. Event.wait also wakes
+                        # immediately for Ctrl+C.
+                        shutdown_event.wait(capacity_recheck_wait_seconds(bus.data, set(instances)))
                     bus.update(event="Agent capacity recheck: resuming")
 
                 bus.update(state="ROTATING_AGENT", active_agent=None)

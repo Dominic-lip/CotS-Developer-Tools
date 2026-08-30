@@ -367,6 +367,33 @@ class TestProviderRotation(unittest.TestCase):
         self.assertTrue(sup.provider_due_for_probe({"status": "USAGE_EXHAUSTED", "reset_at": now - 1}, now))
         self.assertFalse(sup.provider_due_for_probe({"status": "USAGE_EXHAUSTED", "reset_at": now - 1, "last_availability_probe_at": now}, now))
 
+    def test_unknown_reset_provider_becomes_due_at_persisted_probe_time(self):
+        now = 10_000.0
+        info = {"status": "USAGE_EXHAUSTED", "reset_at": None, "next_availability_probe_at": now + 1}
+        self.assertFalse(sup.provider_due_for_probe(info, now))
+        self.assertTrue(sup.provider_due_for_probe(info, now + 1))
+
+    def test_unknown_reset_backoff_is_bounded_and_prevents_probe_spam(self):
+        now = 10_000.0
+        info = {"status": "USAGE_EXHAUSTED", "reset_at": None}
+        first = sup.schedule_unknown_reset_probe(info, now, failed_probe=False)
+        self.assertEqual(first["availability_probe_attempts"], 0)
+        self.assertEqual(first["next_availability_probe_at"], now + 300)
+        failed = sup.schedule_unknown_reset_probe({**info, **first}, now + 300, failed_probe=True)
+        self.assertEqual(failed["availability_probe_attempts"], 1)
+        self.assertEqual(failed["next_availability_probe_at"], now + 300 + 600)
+        self.assertFalse(sup.provider_due_for_probe({**info, **failed}, now + 300 + 599))
+        self.assertEqual(sup.unknown_reset_probe_delay(99), sup.UNKNOWN_RESET_MAX_PROBE_SECONDS)
+
+    def test_capacity_wait_wakes_for_earliest_known_or_unknown_deadline(self):
+        now = 10_000.0
+        checkpoint = {
+            "codex": {"status": "USAGE_EXHAUSTED", "reset_at": now + 120},
+            "claude": {"status": "USAGE_EXHAUSTED", "reset_at": None, "next_availability_probe_at": now + 45},
+        }
+        self.assertEqual(sup.capacity_recheck_wait_seconds(checkpoint, {"codex", "claude"}, now), 45)
+        self.assertEqual(sup.capacity_recheck_wait_seconds({"codex": checkpoint["codex"]}, {"codex"}, now), 120)
+
     def test_preferred_return_requires_real_recovery_at_safe_boundary(self):
         checkpoint = {"codex": {"status": "READY"}}
         self.assertTrue(sup.should_return_to_preferred(checkpoint, "claude", "codex", {"codex"}))
@@ -443,6 +470,57 @@ class TestStaleCheckpointFields(NullStatusBusIO):
         self.assertEqual(bus.data["codex"]["status"], "USAGE_EXHAUSTED")
         self.assertEqual(bus.data["codex"]["last_error"], "new_limit")
         self.assertGreater(bus.data["codex"]["reset_at"], time.time())
+
+    def test_unknown_reset_failed_probe_schedules_next_without_task_turn(self):
+        class ProbeLimited:
+            calls = 0
+            def probe_availability(self):
+                self.calls += 1
+                raise sup.UsageResetRequired("still_limited", None)
+        now = time.time()
+        provider = ProbeLimited()
+        bus = sup.StatusBus({"claude": {"status": "USAGE_EXHAUSTED", "reset_at": None, "next_availability_probe_at": now - 1}})
+        sup.refresh_provider_availability(bus, {"claude": provider}, ["claude"])
+        info = bus.data["claude"]
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(info["status"], "USAGE_EXHAUSTED")
+        self.assertEqual(info["availability_probe_attempts"], 1)
+        self.assertGreater(info["next_availability_probe_at"], time.time())
+        sup.refresh_provider_availability(bus, {"claude": provider}, ["claude"])
+        self.assertEqual(provider.calls, 1)
+
+    def test_unknown_reset_success_clears_backoff_and_allows_handoff_target(self):
+        class ProbeOK:
+            def probe_availability(self): pass
+        bus = sup.StatusBus({"claude": {
+            "status": "USAGE_EXHAUSTED", "reset_at": None, "last_error": "claude_usage_limit",
+            "availability_probe_attempts": 3, "next_availability_probe_at": time.time() - 1,
+        }})
+        recovered = sup.refresh_provider_availability(bus, {"claude": ProbeOK()}, ["claude"])
+        info = bus.data["claude"]
+        self.assertEqual(recovered, {"claude"})
+        self.assertEqual(info["status"], "READY")
+        self.assertIsNone(info["reset_at"])
+        self.assertIsNone(info["last_error"])
+        self.assertEqual(info["availability_probe_attempts"], 0)
+        self.assertIsNone(info["next_availability_probe_at"])
+        # This is the exact selection condition used by the pending structured
+        # HANDOFF branch in main's waiting loop.
+        self.assertTrue(sup.is_agent_usable(info, configured=True))
+
+    def test_later_known_reset_replaces_unknown_reset_schedule(self):
+        class ProbeLimitedWithReset:
+            def probe_availability(self):
+                raise sup.UsageResetRequired("limited", time.time() + 120)
+        bus = sup.StatusBus({"claude": {
+            "status": "USAGE_EXHAUSTED", "reset_at": None,
+            "availability_probe_attempts": 2, "next_availability_probe_at": time.time() - 1,
+        }})
+        sup.refresh_provider_availability(bus, {"claude": ProbeLimitedWithReset()}, ["claude"])
+        info = bus.data["claude"]
+        self.assertGreater(info["reset_at"], time.time())
+        self.assertEqual(info["availability_probe_attempts"], 0)
+        self.assertIsNone(info["next_availability_probe_at"])
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +612,15 @@ class TestDashboardRendering(unittest.TestCase):
         snapshot = {"state": "RUNNING_CODEX", "codex": {"status": "STALLED_PROVIDER", "reset_at": time.time() + 60}}
         lines = sup.render_frame_lines(snapshot)
         self.assertTrue(any("reset=" in line for line in lines))
+
+    def test_unknown_reset_status_shows_next_availability_probe(self):
+        snapshot = {"state": "WAITING_FOR_AGENT_CAPACITY", "claude": {
+            "status": "USAGE_EXHAUSTED", "reset_at": None,
+            "next_availability_probe_at": time.time() + 60,
+        }}
+        lines = sup.render_frame_lines(snapshot)
+        self.assertTrue(any("reset=unknown" in line for line in lines))
+        self.assertTrue(any("next availability probe:" in line for line in lines))
 
     def test_rotating_agent_shows_no_active_agent(self):
         snapshot = {"state": "ROTATING_AGENT", "active_agent": None}
