@@ -109,6 +109,27 @@ returned `"skeleton": ".../SK_Mannequin.SK_Mannequin"`, `"is_compatible": true`,
 confirming the capability works end-to-end against the real imported
 locomotion content, not just in the automation test process.
 
+## Third increment: clip policy metadata inspection
+
+`GetAnimationAsset` now includes two direct `UAnimSequence` properties needed
+by the later locomotion policy validator: `is_looping` (`bLoop`) and
+`has_root_motion` (`HasRootMotion()`). This stays in the existing read-only
+Inspection toolset; it does not claim to author or retarget animation assets.
+
+- The extended `CotS.Inspection.SkeletonCompatibility` automation test reads
+  the permanent `MM_Idle` asset and asserts both returned fields. The actual
+  bundled template setting is `is_looping: false`, `has_root_motion: false`;
+  the test deliberately reports that authored truth rather than assuming an
+  idle policy.
+- Canonical fixed Host `BuildToolLab` succeeded (UBT `Result: Succeeded`, exit
+  0) after compiling the shared CotSDeveloperTools module. Fixed
+  `RunCotSAutomation` returned exit 0.
+- Native UE MCP live readback (operation
+  `2443a141-4286-b7fc-af0a-a29403606998`) returned the exact idle path,
+  `AnimSequence` class, the Mannequin skeleton, `play_length_seconds:
+  7.5666666030883789`, `sampled_keys: 228`, `is_looping: false`, and
+  `has_root_motion: false`, with no warnings or errors.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman

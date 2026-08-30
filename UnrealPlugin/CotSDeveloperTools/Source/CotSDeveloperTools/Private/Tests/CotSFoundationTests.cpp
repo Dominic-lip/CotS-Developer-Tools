@@ -174,6 +174,12 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TestTrue(TEXT("Animation-asset skeleton resolution succeeds"), AnimJson.IsValid() && AnimJson->GetBoolField(TEXT("success")));
     TestEqual(TEXT("Idle animation resolves to the imported Mannequin skeleton"), AnimJson->GetObjectField(TEXT("data"))->GetStringField(TEXT("skeleton")), SkeletonPath);
 
+    TSharedPtr<FJsonObject> AnimationMetadataJson;
+    TestTrue(TEXT("Animation metadata inspection returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetAnimationAsset(IdlePath)), AnimationMetadataJson));
+    TestTrue(TEXT("Animation metadata inspection succeeds"), AnimationMetadataJson.IsValid() && AnimationMetadataJson->GetBoolField(TEXT("success")));
+    TestFalse(TEXT("Idle animation reports its non-looping setting"), AnimationMetadataJson->GetObjectField(TEXT("data"))->GetBoolField(TEXT("is_looping")));
+    TestFalse(TEXT("Idle animation reports no root motion"), AnimationMetadataJson->GetObjectField(TEXT("data"))->GetBoolField(TEXT("has_root_motion")));
+
     TSharedPtr<FJsonObject> MissingJson;
     TestTrue(TEXT("Nonexistent object path returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetSkeletonCompatibility(TEXT("/Game/Characters/Mannequins/Meshes/Missing.Missing"), FString())), MissingJson));
     TestFalse(TEXT("Nonexistent object path fails cleanly"), MissingJson.IsValid() && MissingJson->GetBoolField(TEXT("success")));

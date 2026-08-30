@@ -335,7 +335,16 @@ FString UCotSInspectionToolset::GetAnimationAsset(const FString& ObjectPath)
     else if (const UAnimBlueprint* AnimationBlueprint = Cast<UAnimBlueprint>(Object)) { Result.Data->SetStringField(TEXT("skeleton"), PathOf(AnimationBlueprint->TargetSkeleton)); Result.Data->SetStringField(TEXT("preview_mesh"), PathOf(AnimationBlueprint->GetPreviewMesh())); }
     else if (Object->IsA<USkeleton>()) { Result.Data->SetStringField(TEXT("skeleton"), PathOf(Object)); }
     else { return FCotSOperationResult::Fail(TEXT("CotS.Inspection.GetAnimationAsset"), TEXT("unsupported_animation_asset"), TEXT("The object is not a Skeleton, SkeletalMesh, AnimationSequence, AnimBlueprint, or BlendSpace.")).ToJson(); }
-    if (const UAnimSequence* Sequence = Cast<UAnimSequence>(Object)) { Result.Data->SetNumberField(TEXT("play_length_seconds"), Sequence->GetPlayLength()); Result.Data->SetNumberField(TEXT("sampled_keys"), Sequence->GetNumberOfSampledKeys()); }
+    if (const UAnimSequence* Sequence = Cast<UAnimSequence>(Object))
+    {
+        // Locomotion-validation-relevant metadata: idle/walk clips should
+        // loop, jump start/land typically should not, and root motion
+        // consistency matters once these feed a locomotion AnimBP.
+        Result.Data->SetNumberField(TEXT("play_length_seconds"), Sequence->GetPlayLength());
+        Result.Data->SetNumberField(TEXT("sampled_keys"), Sequence->GetNumberOfSampledKeys());
+        Result.Data->SetBoolField(TEXT("is_looping"), Sequence->bLoop);
+        Result.Data->SetBoolField(TEXT("has_root_motion"), Sequence->HasRootMotion());
+    }
     if (const UBlendSpace* BlendSpace = Cast<UBlendSpace>(Object)) { Result.Data->SetNumberField(TEXT("sample_count"), BlendSpace->GetNumberOfBlendSamples()); }
     return Result.ToJson();
 }
