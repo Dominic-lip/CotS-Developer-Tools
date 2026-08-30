@@ -28,12 +28,15 @@ SCRIPTS = REPO / "Scripts"
 COTS = REPO / ".cots"
 STATE_PATH = COTS / "factory-controller.local.json"
 SUPERVISOR_STATE = COTS / "agent-supervisor.local.json"
+COMPLETION_STATE = REPO / "Docs" / "FOUNDATION_COMPLETION_STATE.json"
 HOST_SCRIPT = SCRIPTS / "CotSHostMcp.py"
 SUPERVISOR_SCRIPT = SCRIPTS / "CotSAgentSupervisor.py"
 MAX_REPAIR_ATTEMPTS = 3
 POLL_SECONDS = 1.0
 DASHBOARD_REFRESH_SECONDS = 0.75
 CHECKPOINT_STALE_SECONDS = 90.0
+WAIT_HEARTBEAT_STALE_SECONDS = 150.0
+PROBE_HEARTBEAT_STALE_SECONDS = 90.0
 SUPERVISOR_STARTUP_GRACE_SECONDS = 30.0
 TERMINAL_BOUNDARY_WAIT_SECONDS = 15.0
 
@@ -81,6 +84,52 @@ def read_checkpoint() -> tuple[dict[str, Any], bool]:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}, False
     return value, isinstance(value, dict) and isinstance(value.get("state"), str) and bool(value["state"])
+
+
+def authoritative_next_required_task(path: Path = COMPLETION_STATE) -> str | None:
+    """Return the earliest incomplete task from the checked-in scheduler state.
+
+    This intentionally validates the same complete task universe as the
+    supervisor before the outer Factory can claim COMPLETE.  A supervisor
+    outcome, repair prose, or process exit is never completion evidence.
+    """
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"completion state unreadable: {error}") from error
+    tasks = document.get("tasks")
+    if document.get("schema_version") != 1:
+        raise ValueError("completion state has unsupported schema version")
+    if not isinstance(tasks, list) or not tasks:
+        raise ValueError("completion state has no task list")
+    expected = (
+        {f"TASK-{number:03d}" for number in range(9)} | {"TASK-008A", "TASK-008B", "TASK-008C"}
+        | {f"TASK-{number:03d}" for number in range(9, 17)} | {f"TASK-{number}" for number in range(100, 116)}
+    )
+    seen: set[str] = set()
+    allowed = {"COMPLETE_VERIFIED", "COMPLETE_BUT_EVIDENCE_MISSING", "PARTIAL", "NOT_STARTED", "SUPERSEDED"}
+    for entry in tasks:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str) or entry["id"] in seen:
+            raise ValueError("completion state has invalid or duplicate task records")
+        if entry["id"] not in expected or entry.get("status") not in allowed:
+            raise ValueError("completion state has invalid task records")
+        if entry["status"] == "COMPLETE_VERIFIED" and not entry.get("evidence"):
+            raise ValueError(f"completion state lacks evidence for {entry['id']}")
+        seen.add(entry["id"])
+    if seen != expected:
+        raise ValueError("completion state is missing required roadmap tasks")
+    return next((entry["id"] for entry in tasks if entry["status"] != "COMPLETE_VERIFIED"), None)
+
+
+def clear_stopped_provider_activity(checkpoint: dict[str, Any]) -> dict[str, Any]:
+    """A stopped owned supervisor cannot have an active provider turn."""
+    updated = dict(checkpoint)
+    updated["active_agent"] = None
+    for name in ("codex", "claude"):
+        info = updated.get(name)
+        if isinstance(info, dict) and info.get("status") == "ACTIVE":
+            updated[name] = {**info, "status": "IDLE"}
+    return updated
 
 
 def atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -180,6 +229,7 @@ class FactoryController:
         self.dashboard_thread: threading.Thread | None = None
         self._git_snapshot: dict[str, Any] = {}
         self._git_snapshot_at = 0.0
+        self._normal_restart_requested = False
 
     def save(self, event: str | None = None, **fields: Any) -> None:
         self.state.update(fields)
@@ -315,6 +365,27 @@ class FactoryController:
         except OSError:
             return 0.0
 
+    @staticmethod
+    def watchdog_seconds(state: str) -> float:
+        """State-specific freshness contracts; waits are not active turns."""
+        if state in {"RUNNING_CODEX", "RUNNING_CLAUDE"}:
+            return CHECKPOINT_STALE_SECONDS
+        if state in {"WAITING_FOR_AGENT_CAPACITY", "WAITING_FOR_USAGE_RESET"}:
+            return WAIT_HEARTBEAT_STALE_SECONDS
+        if state == "PROBING_AVAILABILITY":
+            return PROBE_HEARTBEAT_STALE_SECONDS
+        if state == "ROTATING_AGENT":
+            return PROBE_HEARTBEAT_STALE_SECONDS
+        # A forward-compatible unknown state gets a longer grace, but still
+        # requires a correlated owned-process checkpoint heartbeat.
+        return WAIT_HEARTBEAT_STALE_SECONDS
+
+    def mark_supervisor_stopped(self, checkpoint: dict[str, Any]) -> None:
+        cleaned = clear_stopped_provider_activity(checkpoint)
+        if cleaned != checkpoint:
+            cleaned["updated_at"] = time.time()
+            atomic_json(SUPERVISOR_STATE, cleaned)
+
     def live_supervisor_boundary(self, now: float | None = None) -> tuple[GateCategory | None, str | None]:
         """Assess a still-running child without inferring death from its text."""
         assert self.supervisor is not None
@@ -329,8 +400,13 @@ class FactoryController:
             return GateCategory.RECOVERABLE_STALE_STATE, "supervisor checkpoint is structurally invalid"
         state = checkpoint["state"]
         age = self.checkpoint_age(checkpoint, current)
-        if age > CHECKPOINT_STALE_SECONDS:
-            return GateCategory.RECOVERABLE_STALE_STATE, f"supervisor heartbeat stale for {age:.0f}s (state {state!r})"
+        watchdog = self.watchdog_seconds(state)
+        # Wait-state pulses are local telemetry: their freshness proves the
+        # sleeping supervisor is alive without spending a provider turn.
+        heartbeat = checkpoint.get("wait_heartbeat_at") if state.startswith("WAITING_") else self.checkpoint_heartbeat_at(checkpoint)
+        heartbeat_age = max(0.0, current - float(heartbeat)) if isinstance(heartbeat, (int, float)) else age
+        if heartbeat_age > watchdog:
+            return GateCategory.RECOVERABLE_STALE_STATE, f"supervisor {state.lower()} heartbeat stale for {heartbeat_age:.0f}s"
         if self.checkpoint_heartbeat_at(checkpoint) < started_at:
             if current - started_at <= SUPERVISOR_STARTUP_GRACE_SECONDS:
                 return None, None
@@ -377,8 +453,23 @@ class FactoryController:
     def handle_gate(self, exit_code: int | None, forced: tuple[GateCategory, str] | None = None) -> bool:
         checkpoint = read_json(SUPERVISOR_STATE, {})
         if checkpoint.get("state") == "COMPLETE":
-            self.save("Roadmap completion verified", factory="COMPLETE", supervisor_state="STOPPED")
-            return False
+            try:
+                outstanding = authoritative_next_required_task()
+            except ValueError as error:
+                self.mark_supervisor_stopped(checkpoint)
+                self.save(f"Completion state validation failed: {error}", factory="HUMAN_REQUIRED", supervisor_state="STOPPED")
+                return False
+            self.mark_supervisor_stopped(checkpoint)
+            if outstanding is None:
+                self.save("Roadmap completion verified", factory="COMPLETE", supervisor_state="STOPPED")
+                return False
+            # A bounded repair/test process or agent prose cannot advance the
+            # roadmap.  Restart the normal scheduler against the preserved
+            # checkpoint so its task/phase/handoff/context remain intact.
+            self.save(f"Rejected false completion; scheduling {outstanding}", factory="RUNNING", supervisor_state="RESTARTING")
+            self._normal_restart_requested = True
+            self.start_supervisor()
+            return True
         category, reason = forced if forced else classify_gate(checkpoint, exit_code)[:2]
         fingerprint = incident_fingerprint(category, reason, checkpoint)
         attempts = int(self.state["repair_attempts"].get(fingerprint, 0))
@@ -410,8 +501,10 @@ class FactoryController:
                     exit_code = self.await_terminal_boundary(reason or "supervisor boundary")
                     if not self.handle_gate(exit_code, (category, reason or "supervisor boundary")):
                         return 0
-                    repair_mode = True
+                    repair_mode = not self._normal_restart_requested
+                    self._normal_restart_requested = False
                     continue
+                self.mark_supervisor_stopped(read_json(SUPERVISOR_STATE, {}))
                 if repair_mode:
                 # A repair turn is bounded to one completed supervisor turn.
                 # Its own validation/commit result is in the checkpoint and
@@ -425,7 +518,8 @@ class FactoryController:
                     continue
                 if not self.handle_gate(exit_code):
                     return 0
-                repair_mode = True
+                repair_mode = not self._normal_restart_requested
+                self._normal_restart_requested = False
         finally:
             self.stop_dashboard()
 

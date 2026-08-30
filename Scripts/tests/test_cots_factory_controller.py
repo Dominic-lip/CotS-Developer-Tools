@@ -71,6 +71,17 @@ class TestRecoveryPolicy(unittest.TestCase):
                 self.assertFalse(controller.handle_gate(0)); start.assert_not_called()
             self.assertEqual(controller.state["factory"], "HUMAN_REQUIRED")
 
+    def test_later_production_task_prevents_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            document = json.loads(factory.COMPLETION_STATE.read_text(encoding="utf-8"))
+            for task in document["tasks"]:
+                task["status"] = "COMPLETE_VERIFIED"
+                task["evidence"] = ["test evidence"]
+            next(task for task in document["tasks"] if task["id"] == "TASK-100")["status"] = "NOT_STARTED"
+            path = Path(directory) / "completion.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            self.assertEqual(factory.authoritative_next_required_task(path), "TASK-100")
+
 
 class TestOwnedProcesses(unittest.TestCase):
     def test_stop_owned_touches_only_given_process(self):
@@ -146,6 +157,32 @@ class TestSupervisorLifecycleMonitoring(unittest.TestCase):
                 self.assertEqual(category, factory.GateCategory.RECOVERABLE_STALE_STATE)
                 self.assertIn("stale", reason)
 
+    def test_capacity_wait_survives_more_than_active_turn_watchdog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = {"state": "WAITING_FOR_AGENT_CAPACITY", "updated_at": 1000.0, "wait_heartbeat_at": 1095.0,
+                          "waiting_for_provider": "claude", "next_capacity_check_at": 1200.0}
+            patches, process = self.controller_for_checkpoint(directory, checkpoint)
+            with patches[0], patches[1]:
+                controller = factory.FactoryController(); controller.supervisor = process; controller.state["supervisor_started_at"] = 900.0
+                self.assertEqual(controller.live_supervisor_boundary(now=1100.0), (None, None))
+
+    def test_usage_reset_wait_uses_wait_heartbeat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = {"state": "WAITING_FOR_USAGE_RESET", "updated_at": 1000.0, "wait_heartbeat_at": 1095.0}
+            patches, process = self.controller_for_checkpoint(directory, checkpoint)
+            with patches[0], patches[1]:
+                controller = factory.FactoryController(); controller.supervisor = process; controller.state["supervisor_started_at"] = 900.0
+                self.assertEqual(controller.live_supervisor_boundary(now=1100.0), (None, None))
+
+    def test_genuinely_stale_waiting_supervisor_is_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = {"state": "WAITING_FOR_AGENT_CAPACITY", "updated_at": 1.0, "wait_heartbeat_at": 1.0}
+            patches, process = self.controller_for_checkpoint(directory, checkpoint)
+            with patches[0], patches[1]:
+                controller = factory.FactoryController(); controller.supervisor = process
+                category, _ = controller.live_supervisor_boundary(now=1.0 + factory.WAIT_HEARTBEAT_STALE_SECONDS + 1)
+                self.assertEqual(category, factory.GateCategory.RECOVERABLE_STALE_STATE)
+
     def test_recoverable_gate_schedules_repair(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory, "SUPERVISOR_STATE", Path(directory) / "supervisor.json"):
             checkpoint = {"state": "RECOVERABLE_GATE", "recoverable_gate": {"category": "RECOVERABLE_HOST_MCP", "reason": "host unavailable", "recommended_action": "restart"}}
@@ -155,7 +192,7 @@ class TestSupervisorLifecycleMonitoring(unittest.TestCase):
                 self.assertTrue(controller.handle_gate(0))
                 start.assert_called_once()
 
-    def test_human_required_and_complete_are_terminal_cleanly(self):
+    def test_human_required_and_false_complete_are_terminal_cleanly(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory, "SUPERVISOR_STATE", Path(directory) / "supervisor.json"):
             factory.SUPERVISOR_STATE.write_text(json.dumps({"state": "HUMAN_GATE", "human_gate": "choose game design"}), encoding="utf-8")
             controller = factory.FactoryController()
@@ -163,8 +200,25 @@ class TestSupervisorLifecycleMonitoring(unittest.TestCase):
             self.assertEqual(controller.state["factory"], "HUMAN_REQUIRED")
             factory.SUPERVISOR_STATE.write_text(json.dumps({"state": "COMPLETE"}), encoding="utf-8")
             controller = factory.FactoryController()
-            self.assertFalse(controller.handle_gate(0))
-            self.assertEqual(controller.state["factory"], "COMPLETE")
+            with mock.patch.object(controller, "start_supervisor") as start:
+                self.assertTrue(controller.handle_gate(0))
+                start.assert_called_once_with()
+            self.assertNotEqual(controller.state["factory"], "COMPLETE")
+
+    def test_false_complete_preserves_task_checkpoint_and_clears_active_provider(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory, "SUPERVISOR_STATE", Path(directory) / "supervisor.json"):
+            checkpoint = {"state": "COMPLETE", "task": "TASK-012", "phase": "claude-proof", "pending_handoff_target": "claude",
+                          "compact_task_context": {"acceptance_remaining": ["Claude proof"]}, "active_agent": "claude",
+                          "claude": {"status": "ACTIVE"}}
+            factory.SUPERVISOR_STATE.write_text(json.dumps(checkpoint), encoding="utf-8")
+            controller = factory.FactoryController()
+            with mock.patch.object(controller, "start_supervisor"):
+                controller.handle_gate(0)
+            restored = json.loads(factory.SUPERVISOR_STATE.read_text(encoding="utf-8"))
+            self.assertEqual(restored["task"], "TASK-012")
+            self.assertEqual(restored["compact_task_context"]["acceptance_remaining"], ["Claude proof"])
+            self.assertIsNone(restored["active_agent"])
+            self.assertEqual(restored["claude"]["status"], "IDLE")
 
 
 class TestHostDisconnectNoise(unittest.TestCase):

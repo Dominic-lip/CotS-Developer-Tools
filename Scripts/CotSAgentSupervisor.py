@@ -48,6 +48,10 @@ TURN_TIMEOUT_SECONDS = 2 * 60 * 60
 UPDATE_TIMEOUT_SECONDS = 120
 CAPACITY_RECHECK_SECONDS = 300
 AVAILABILITY_PROBE_RECHECK_SECONDS = 60
+# Capacity waits are local-process work, not provider turns.  Persist a small
+# checkpoint pulse frequently enough that the outer controller can distinguish
+# a healthy sleeping supervisor from a wedged one without spending quota.
+WAIT_HEARTBEAT_SECONDS = 30.0
 # A provider that reports usage exhaustion without an actual reset timestamp
 # must not become a permanent human gate.  Probe it harmlessly after five
 # minutes, then back off 10m, 20m and finally 30m between continued unknown
@@ -475,8 +479,11 @@ class StatusBus:
 
     def update(self, event: str | None = None, **fields: Any) -> None:
         with self.lock:
+            previous_action = self.data.get("current_action")
             self.data.update(fields)
             self.data["updated_at"] = time.time()
+            if "current_action" in fields and fields["current_action"] != previous_action:
+                self.data["action_started_at"] = self.data["updated_at"]
             new_state = fields.get("state")
             if new_state:
                 for owning_state, scoped_fields in self.STATE_SCOPED_FIELDS.items():
@@ -1792,6 +1799,33 @@ def capacity_recheck_wait_seconds(checkpoint: dict[str, Any], configured: set[st
     return min(waits)
 
 
+def wait_for_capacity(
+    bus: StatusBus, shutdown_event: threading.Event, configured: set[str], *,
+    provider: str | None = None,
+) -> bool:
+    """Sleep locally until the next capacity check, emitting no provider turn.
+
+    Returns ``True`` when shutdown was requested.  Each pulse records the
+    waited provider and next meaningful probe/reset deadline for the Factory's
+    state-aware watchdog.
+    """
+    while not shutdown_event.is_set():
+        now = time.time()
+        wait_seconds = capacity_recheck_wait_seconds(bus.data, configured, now)
+        bus.update(
+            wait_heartbeat_at=now,
+            waiting_for_provider=provider,
+            next_capacity_check_at=now + wait_seconds,
+        )
+        if shutdown_event.wait(min(WAIT_HEARTBEAT_SECONDS, max(0.0, wait_seconds))):
+            return True
+        # A short wait may have been only a heartbeat interval.  Let callers
+        # decide whether a due probe can be issued; do not start a task turn.
+        if time.time() >= now + wait_seconds:
+            return False
+    return True
+
+
 def refresh_provider_availability(
     bus: StatusBus, instances: dict[str, Any], names: list[str] | None = None,
 ) -> set[str]:
@@ -1883,6 +1917,8 @@ def load_foundation_completion_state(path: Path = FOUNDATION_COMPLETION_STATE) -
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise AppServerError(f"foundation_completion_state_invalid: {error}") from error
+    if document.get("schema_version") != 1:
+        raise AppServerError("foundation_completion_state_invalid: unsupported schema version")
     tasks = document.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         raise AppServerError("foundation_completion_state_invalid: tasks must be a non-empty list")
@@ -2055,7 +2091,7 @@ def main() -> int:
                         refresh_provider_availability(bus, instances, [active_name])
                         if is_agent_usable(bus.data.get(active_name, {}), active_name in instances):
                             break
-                        shutdown_event.wait(capacity_recheck_wait_seconds(bus.data, set(instances)))
+                        wait_for_capacity(bus, shutdown_event, set(instances), provider=active_name)
                     if shutdown_event.is_set():
                         raise Shutdown()
                     bus.update(state="ROTATING_AGENT", active_agent=None, event=f"Handoff target {active_name.capitalize()} recovered")
@@ -2235,7 +2271,11 @@ def main() -> int:
                             bus.update(state="COMPLETE", current_action="Roadmap completion verified", event="Roadmap completion verified")
                             return 0
                         if args.max_turns and state["turn_count"] >= args.max_turns:
-                            bus.update(state="COMPLETE", current_action="Test turn limit reached", event="Test turn limit reached")
+                            # --max-turns is a bounded test/repair harness,
+                            # never roadmap completion.  The Factory uses it
+                            # for one repair turn and must not mistake that
+                            # controlled exit for acceptance evidence.
+                            bus.update(state="STOPPING", current_action="Bounded test turn limit reached", event="Bounded test turn limit reached")
                             return 0
                         # Hot-loop circuit breaker: a real turn that did meaningful
                         # work (assistant text and/or recorded tool/item activity)
@@ -2312,7 +2352,10 @@ def main() -> int:
                         # its unknown-reset availability-probe deadline, or
                         # the regular capacity recheck. Event.wait also wakes
                         # immediately for Ctrl+C.
-                        shutdown_event.wait(capacity_recheck_wait_seconds(bus.data, set(instances)))
+                        wait_for_capacity(
+                            bus, shutdown_event, set(instances),
+                            provider=pending_handoff_target,
+                        )
                     bus.update(event="Agent capacity recheck: resuming")
 
                 bus.update(state="ROTATING_AGENT", active_agent=None)

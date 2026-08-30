@@ -181,6 +181,42 @@ class TestRoadmapCompletionState(unittest.TestCase):
         self.assertIn(sup.PROVIDER_SELF_VALIDATION_RULE, sup.CLAUDE_START)
 
 
+class TestCapacityWaitTelemetry(NullStatusBusIO):
+    def test_local_wait_heartbeat_consumes_no_provider_turn(self):
+        class ShutdownNow:
+            def is_set(self): return False
+            def wait(self, _seconds): return True
+        bus = sup.StatusBus({"state": "WAITING_FOR_AGENT_CAPACITY", "claude": {"status": "USAGE_EXHAUSTED", "reset_at": time.time() + 300}})
+        self.assertTrue(sup.wait_for_capacity(bus, ShutdownNow(), {"claude"}, provider="claude"))
+        self.assertEqual(bus.data["waiting_for_provider"], "claude")
+        self.assertIn("wait_heartbeat_at", bus.data)
+        self.assertNotIn("provider_turns", bus.data.get("efficiency", {}))
+
+    def test_due_availability_probe_is_still_scheduled_after_wait(self):
+        class ProbeOK:
+            calls = 0
+            def probe_availability(self): self.calls += 1
+        provider = ProbeOK()
+        bus = sup.StatusBus({"state": "WAITING_FOR_USAGE_RESET", "claude": {"status": "USAGE_EXHAUSTED", "reset_at": time.time() - 1}})
+        self.assertEqual(sup.refresh_provider_availability(bus, {"claude": provider}, ["claude"]), {"claude"})
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(bus.data["claude"]["status"], "READY")
+
+    def test_test_turn_limit_is_not_completion_state(self):
+        # The bounded limit is intentionally represented by STOPPING in main;
+        # keep the exact policy visible without launching a provider process.
+        self.assertNotIn('state="COMPLETE", current_action="Test turn limit reached"', (SCRIPTS_DIR / "CotSAgentSupervisor.py").read_text(encoding="utf-8"))
+
+    def test_current_action_has_a_real_start_timestamp(self):
+        bus = sup.StatusBus({"state": "STARTING"})
+        before = time.time()
+        bus.update(current_action="Waiting for agent capacity")
+        self.assertGreaterEqual(bus.data["action_started_at"], before)
+        started = bus.data["action_started_at"]
+        bus.update(wait_heartbeat_at=time.time())
+        self.assertEqual(bus.data["action_started_at"], started)
+
+
 # ---------------------------------------------------------------------------
 # 1. Codex usageLimitExceeded classification against the ACTUAL captured
 #    protocol (.cots/codex-protocol.log, excerpted into a fixture).
