@@ -10,7 +10,7 @@
     {"id":"TASK-005","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-005_PLUGIN_FOUNDATION.md: canonical build success plus 12/12 CotS.* automation tests proving editor startup and module/toolset load"]},
     {"id":"TASK-006","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-006_INSPECTION_FOUNDATION.md: ambiguous duplicate-name asset proof reused from the TASK-005 CotS.Inspection.ExactPathsAndEmptyReferences automation run"]},
     {"id":"TASK-007","status":"COMPLETE_VERIFIED","evidence":["a9d1d94: Docs/EXECUTION_BRIDGE.md"]},
-    {"id":"TASK-008","status":"COMPLETE_BUT_EVIDENCE_MISSING"},
+    {"id":"TASK-008","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-008_SAFE_MUTATION_PRIMITIVES.md: guarded mutation + independent reinspection proof reused from the TASK-005 CotS.Mutation.* automation runs"]},
     {"id":"TASK-008A","status":"PARTIAL"},
     {"id":"TASK-008B","status":"COMPLETE_BUT_EVIDENCE_MISSING"},
     {"id":"TASK-008C","status":"COMPLETE_VERIFIED","evidence":["ba71b42 and follow-ups: Scripts/tests/test_cots_agent_supervisor.py fixtures"]},
