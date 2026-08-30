@@ -10,7 +10,7 @@ If the lifecycle tool refuses its safety preconditions, `CloseToolLab` returns t
 
 The controller does not accept shell text, executable paths, arbitrary command arguments, filesystem paths, or target PIDs. Build and test commands are fixed to the canonical build script and the `CotS` automation invocation with the in-memory DDC workaround. Local lock/checkpoint state is intentionally ignored.
 
-Typical agent sequence: acquire a stable agent ID, close ToolLab, build, run tests, open, wait for `http://127.0.0.1:8000/mcp`, use native Unreal MCP for inspection/mutation, close when finished, then release the lock. Do not use this controller to evade the repository's broader single-mutating-agent policy.
+Typical agent sequence: acquire a stable agent ID, close ToolLab, build, run tests, open, wait for `http://127.0.0.1:8000/mcp`, use native Unreal MCP for inspection/mutation, close when finished, then release the lock. Under the persistent supervisor that identity is task-scoped and provider-neutral (for example `supervisor-task-012`), so Codex/Claude handoff does not strand a provider-specific owner. `TransferMutationLock` can atomically migrate an existing legacy `codex-task-*`/`claude-task-*` owner to that stable identity; it requires the current owner token and never releases the lock in between. Do not use this controller to evade the repository's broader single-mutating-agent policy.
 
 ## Persistent Codex supervisor (TASK-008B)
 
@@ -62,6 +62,8 @@ the process for this. Exit is reserved for `HUMAN_GATE`, `COMPLETE`, `FAILED`,
 or an operator's Ctrl+C. Rotation always fully closes the previous provider's
 process before the next one starts a turn; two mutating agents are never live
 at once.
+
+An elapsed `reset_at` is a probe cue, not assumed capacity. At safe completed-turn boundaries the supervisor marks that provider `ELIGIBLE_FOR_PROBE`, makes one bounded harmless real-turn probe, and records `PROBING_AVAILABILITY` then either `READY` (clearing stale reset/error data) or a newly observed exhausted/stalled response. When a productive non-preferred turn ends and recovered Codex is ready, it checkpoints, deactivates the current provider, and returns to Codex automatically. Agents that need a specific provider use `SUPERVISOR_OUTCOME: HANDOFF` plus `SUPERVISOR_TARGET_AGENT` and `SUPERVISOR_HANDOFF_REASON`; the supervisor waits/rechecks that target instead of converting capacity into a human decision. Provider-bound `HUMAN_GATE` messages are similarly converted to recovery, while genuine human choices and authentication gates remain terminal human gates.
 
 `Scripts\Launch-CotS-Agents.bat` opens one visible window (`cmd /k`, not
 minimized) so an operator can read supervisor state without inspecting

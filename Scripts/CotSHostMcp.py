@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -182,6 +183,19 @@ def release(arguments: dict[str, Any]) -> dict[str, Any]:
     return result({"owner": agent_id, "released": True})
 
 
+def transfer_lock(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Atomically replace the bearer owner token without ever releasing the
+    single-writer lock. This is solely for a supervisor handoff from a legacy
+    provider-scoped task id to its stable provider-neutral task id."""
+    agent_id = require_owner(arguments)
+    target = arguments.get("target_agent_id")
+    if not isinstance(target, str) or not re.fullmatch(r"supervisor-task-[a-z0-9-]+", target):
+        raise ValueError("target_agent_id must be a provider-neutral supervisor-task-* identity")
+    with STATE_GUARD:
+        write_json(LOCK_FILE, {"agent_id": target, "acquired_at": time.time(), "transferred_from": agent_id})
+    return result({"owner": target, "transferred": True, "previous_owner": agent_id})
+
+
 def open_editor(arguments: dict[str, Any]) -> dict[str, Any]:
     require_owner(arguments)
     with STATE_GUARD:
@@ -281,6 +295,7 @@ TOOLS = {
     "GetToolLabStatus": ("Read current lifecycle readiness; does not require the lock.", status),
     "AcquireMutationLock": ("Claim the single mutating-agent lifecycle lock.", acquire),
     "ReleaseMutationLock": ("Release the caller's lifecycle lock.", release),
+    "TransferMutationLock": ("Atomically transfer a legacy task lock to a provider-neutral supervisor task identity.", transfer_lock),
     "OpenToolLab": ("Launch the fixed ToolLab project.", open_editor),
     "CloseToolLab": ("Request a graceful close for the ToolLab process this controller launched.", close_editor),
     "WaitForUnrealMcp": ("Wait for the fixed loopback Unreal MCP endpoint.", wait_for_mcp),

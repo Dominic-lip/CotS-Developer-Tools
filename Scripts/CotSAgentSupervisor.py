@@ -43,6 +43,7 @@ LEASE = COTS_DIR / "agent-supervisor-lease.local.lock"
 TURN_TIMEOUT_SECONDS = 2 * 60 * 60
 UPDATE_TIMEOUT_SECONDS = 120
 CAPACITY_RECHECK_SECONDS = 300
+AVAILABILITY_PROBE_RECHECK_SECONDS = 60
 MAX_RECENT_EVENTS = 10
 DASHBOARD_REFRESH_SECONDS = 1.0
 EXTERNAL_PROBE_SECONDS = 5.0
@@ -121,6 +122,9 @@ MARKER_INSTRUCTIONS = """End every completed turn with exactly one outcome marke
 SUPERVISOR_OUTCOME: CONTINUE
 HUMAN_GATE: <reason>
 SUPERVISOR_OUTCOME: COMPLETE
+SUPERVISOR_OUTCOME: HANDOFF
+SUPERVISOR_TARGET_AGENT: codex|claude
+SUPERVISOR_HANDOFF_REASON: <provider-specific reason>
 Also emit, each on its own line whenever known, SUPERVISOR_TASK: <task id>
 and SUPERVISOR_PHASE: <short current phase>. Do not stop for routine
 reporting."""
@@ -160,12 +164,22 @@ CotS Host lock or independently running mutating agent. Preserve the
 CotS/Shardlands boundaries, Host MCP restrictions, and production bootstrap
 boundary.
 
+For CotS Host lifecycle mutations use the provider-neutral task identity
+`supervisor-task-<task-number-lowercase>` (for example `supervisor-task-012`),
+not `codex-task-*` or `claude-task-*`. The supervisor can safely hand that
+stable identity to another provider only after this turn ends.
+
 Your tool access is already structurally limited to workspace file edits plus
 exactly two fixed shell invocations: `python Scripts/CotS-GitCompletion.py ...`
 for status/diff/staged task completion/commit/push, and
 `Scripts\\Build-ToolLab.cmd` for the canonical build. You cannot run arbitrary
 shell commands; do not ask for one. Never write Shardlands or mutate
 production CotS without an explicit task authorization.
+
+For CotS Host lifecycle mutations use the provider-neutral task identity
+`supervisor-task-<task-number-lowercase>` (for example `supervisor-task-012`),
+not a provider-specific identity. If another provider is required, emit the
+structured HANDOFF outcome instead of HUMAN_GATE.
 
 {MARKER_INSTRUCTIONS}"""
 
@@ -671,11 +685,38 @@ def text_from(turn: dict[str, Any]) -> str:
 
 
 def turn_outcome(text: str) -> tuple[str, str]:
+    if "SUPERVISOR_OUTCOME: HANDOFF" in text:
+        target_match = re.search(r"^SUPERVISOR_TARGET_AGENT:\s*(codex|claude)\s*$", text, re.MULTILINE | re.IGNORECASE)
+        reason_match = re.search(r"^SUPERVISOR_HANDOFF_REASON:\s*(.+)$", text, re.MULTILINE)
+        if target_match:
+            return "HANDOFF", f"{target_match.group(1).lower()}:{reason_match.group(1).strip() if reason_match else 'provider handoff requested'}"
+        # A malformed handoff is a real agent/output error, not a reason to
+        # strand the task at a human gate.
+        return "HANDOFF", ""
     if "HUMAN_GATE:" in text:
         return "HUMAN_GATE", text.split("HUMAN_GATE:", 1)[1].strip().splitlines()[0]
     if "SUPERVISOR_OUTCOME: COMPLETE" in text:
         return "COMPLETE", ""
     return "CONTINUING", ""
+
+
+def handoff_target(detail: str) -> str | None:
+    """Extract the validated target from a HANDOFF outcome detail."""
+    target, separator, _reason = detail.partition(":")
+    return target if separator and target in AGENT_CLASSES else None
+
+
+PROVIDER_HUMAN_GATE_PATTERNS = (
+    re.compile(r"\b(provider|codex|claude|rotation|handoff|usage|reset|capacity)\b", re.IGNORECASE),
+    re.compile(r"\b(waiting|unavailable|exhausted|stalled|required|pending)\b", re.IGNORECASE),
+)
+
+
+def human_gate_is_provider_recoverable(reason: str) -> bool:
+    """Conservatively identify a provider-bound HUMAN_GATE that the
+    supervisor can recover itself. Genuine approval/auth/decision gates stay
+    human gates; this is deliberately an AND of two provider vocabularies."""
+    return bool(reason) and all(pattern.search(reason) for pattern in PROVIDER_HUMAN_GATE_PATTERNS)
 
 
 def parse_task_phase(text: str) -> tuple[str | None, str | None]:
@@ -762,6 +803,29 @@ class CodexAgent:
             # rather than silently continuing (the TASK-008C hot-loop bug).
             raise TurnFailed(str(error.get("message") or "codex turn failed"), transient=False)
         return TurnResult(text_from(turn), turn.get("durationMs"), len(turn.get("items") or []))
+
+    def probe_availability(self) -> None:
+        """Make one isolated, harmless real App Server turn after a recorded
+        reset has elapsed. Starting a process alone is not evidence that the
+        account can take a turn, so this intentionally waits for completion.
+        The short bounded probe thread is never used for task work."""
+        self.activate(None)
+        try:
+            assert self.app is not None and self.thread_id is not None
+            self.app.request("turn/start", {"threadId": self.thread_id, "input": user_text(
+                "Availability probe only. Do not use tools or change files. Reply exactly SUPERVISOR_PROBE_OK."
+            )}, timeout=30)
+            turn = self.app.wait_turn(self.thread_id, timeout=60)
+            if turn.get("status") == "failed":
+                error = turn.get("error") or self.app.last_error or {}
+                if is_codex_usage_limit_error(error):
+                    raise UsageResetRequired(
+                        str(error.get("codexErrorInfo") or "usageLimitExceeded"),
+                        extract_reset_from_message(str(error.get("message", ""))),
+                    )
+                raise AppServerError(str(error.get("message") or "codex availability probe failed"))
+        finally:
+            self.deactivate()
 
     def deactivate(self) -> None:
         if self.app is not None:
@@ -1131,6 +1195,16 @@ class ClaudeAgent:
     def deactivate(self) -> None:
         pass  # nothing to close: each turn is already a completed subprocess
 
+    def probe_availability(self) -> None:
+        """Claude has no lighter authenticated-turn primitive; use the same
+        bounded harmless prompt, without retaining the probe session."""
+        prior_session = self.session_id
+        self.session_id = None
+        try:
+            self.run_turn("Availability probe only. Do not use tools or change files. Reply exactly SUPERVISOR_PROBE_OK.")
+        finally:
+            self.session_id = prior_session
+
 
 AGENT_CLASSES = {"codex": CodexAgent, "claude": ClaudeAgent}
 START_PROMPTS = {"codex": CODEX_START, "claude": CLAUDE_START}
@@ -1209,6 +1283,37 @@ def mcp_call(connection: Any, request_id: int, method: str, params: dict[str, An
     response = connection.getresponse()
     payload = json.loads(response.read().decode("utf-8"))
     return payload
+
+
+def supervisor_task_owner(task: str | None) -> str | None:
+    match = re.fullmatch(r"TASK-([A-Za-z0-9-]+)", task or "")
+    return f"supervisor-task-{match.group(1).lower()}" if match else None
+
+
+def reconcile_host_lock_owner(bus: StatusBus) -> None:
+    """Migrate a known legacy provider-scoped lock atomically to the stable
+    supervisor task identity. The old bearer remains required; no release gap
+    is created, so another mutator can never acquire the lock mid-handoff."""
+    owner = bus.data.get("mutation_lease_owner")
+    target = supervisor_task_owner(bus.data.get("task"))
+    if not owner or owner == "none" or not target or owner == target:
+        return
+    if not re.fullmatch(r"(?:codex|claude)-task-[a-z0-9-]+", str(owner), re.IGNORECASE):
+        return
+    try:
+        connection = http.client.HTTPConnection(HOST_MCP_HOST, HOST_MCP_PORT, timeout=5)
+        payload = mcp_call(connection, 91, "tools/call", {
+            "name": "TransferMutationLock", "arguments": {"agent_id": owner, "target_agent_id": target},
+        })
+        connection.close()
+        text = payload.get("result", {}).get("content", [{}])[0].get("text", "{}")
+        transferred = json.loads(text)
+        if transferred.get("success"):
+            bus.update(mutation_lease_owner=target, event=f"Host mutation lease migrated {owner} -> {target}")
+    except Exception as error:
+        # Lock reconciliation is retryable and must never make the supervisor
+        # release a lock it cannot prove it owns.
+        bus.update(event=f"Host mutation lease migration deferred: {error}")
 
 
 def task_from_lease_owner(owner: str | None) -> str | None:
@@ -1414,6 +1519,65 @@ def is_agent_usable(info: dict[str, Any], configured: bool) -> bool:
     return reset_at is not None and time.time() >= reset_at
 
 
+def provider_due_for_probe(info: dict[str, Any], now: float | None = None) -> bool:
+    """Whether an exhausted/stalled provider's recorded cooldown has elapsed
+    and it has not been probed recently. An expired estimate is only a cue to
+    probe, never proof of capacity."""
+    now = time.time() if now is None else now
+    if info.get("status") not in ("USAGE_EXHAUSTED", "STALLED_PROVIDER", "ELIGIBLE_FOR_PROBE"):
+        return False
+    reset_at = info.get("reset_at")
+    if reset_at is None or reset_at > now:
+        return False
+    last_probe = info.get("last_availability_probe_at") or 0
+    return now - last_probe >= AVAILABILITY_PROBE_RECHECK_SECONDS
+
+
+def refresh_provider_availability(
+    bus: StatusBus, instances: dict[str, Any], names: list[str] | None = None,
+) -> set[str]:
+    """At a safe boundary, probe only providers whose observed reset has
+    passed. Returns providers that proved a real harmless turn can start and
+    complete. Failures retain a truthful exhausted/stalled state and a bounded
+    recheck timestamp, avoiding probe spam."""
+    recovered: set[str] = set()
+    now = time.time()
+    for name in names or list(instances):
+        info = bus.data.get(name, {})
+        if name not in instances or not provider_due_for_probe(info, now):
+            continue
+        bus.update(event=f"{name.capitalize()} reset elapsed; eligible for availability probe",
+                   **{name: {**info, "status": "ELIGIBLE_FOR_PROBE"}})
+        bus.update(event=f"{name.capitalize()} probing availability",
+                   **{name: {**bus.data.get(name, {}), "status": "PROBING_AVAILABILITY", "last_availability_probe_at": now}})
+        try:
+            instances[name].probe_availability()
+        except UsageResetRequired as error:
+            bus.update(event=f"{name.capitalize()} availability probe still exhausted",
+                       **{name: {**bus.data.get(name, {}), "status": error.status_label,
+                                  "reset_at": error.reset_at, "last_error": str(error),
+                                  "last_availability_probe_at": time.time()}})
+        except (AppServerError, TurnFailed, TimeoutError) as error:
+            # The reset estimate was consumed, but a failed probe is not a
+            # license to submit task turns. Keep the temporary backoff honest.
+            bus.update(event=f"{name.capitalize()} availability probe failed: {error}",
+                       **{name: {**bus.data.get(name, {}), "status": "STALLED_PROVIDER",
+                                  "reset_at": time.time() + STALL_BACKOFF_SECONDS,
+                                  "last_error": str(error), "last_availability_probe_at": time.time()}})
+        else:
+            bus.update(event=f"{name.capitalize()} availability probe succeeded",
+                       **{name: {**bus.data.get(name, {}), "status": "READY", "reset_at": None,
+                                  "last_error": None, "last_availability_probe_at": time.time()}})
+            recovered.add(name)
+    return recovered
+
+
+def should_return_to_preferred(checkpoint: dict[str, Any], current: str, preferred: str, recovered: set[str]) -> bool:
+    """Return only at a completed turn boundary, and only after a real probe
+    made the preferred provider READY. This prevents mid-turn preemption."""
+    return current != preferred and preferred in recovered and checkpoint.get(preferred, {}).get("status") == "READY"
+
+
 def pick_ready_agent(checkpoint: dict[str, Any], configured: set[str], agent_order: list[str], current: str) -> str | None:
     """Best usable agent: prefer rotating to another configured provider over
     resuming ``current``, so Codex exhaustion always hands off to Claude (or
@@ -1502,7 +1666,12 @@ def main() -> int:
                 continue
             version = cls.version()
             instances[name] = cls()
-            bus.update(**{name: {**bus.data.get(name, {}), "status": "IDLE", "version": version}})
+            prior = bus.data.get(name, {})
+            # Never relabel persisted usage exhaustion as IDLE merely because
+            # its CLI executable is installed. The safe-boundary refresh owns
+            # its transition through ELIGIBLE/PROBING to READY.
+            status = prior.get("status") if prior.get("status") in ("USAGE_EXHAUSTED", "STALLED_PROVIDER") else "IDLE"
+            bus.update(**{name: {**prior, "status": status, "version": version}})
         if not instances:
             bus.update(state="FAILED", event="No configured agent CLI is installed")
             return 2
@@ -1511,6 +1680,10 @@ def main() -> int:
         if not args.no_dashboard:
             dashboard_thread = threading.Thread(target=dashboard_loop, args=(bus, shutdown_event), daemon=True)
             dashboard_thread.start()
+        # Do this once before any new provider turn. It is an atomic migration
+        # of a known legacy token, never a release/reacquire sequence.
+        probe_host_mcp(bus)
+        reconcile_host_lock_owner(bus)
 
         preferred = state["preferred_agent"] if state["preferred_agent"] in instances else next(iter(instances))
         active_name = state.get("active_agent") if state.get("active_agent") in instances else preferred
@@ -1520,6 +1693,7 @@ def main() -> int:
         }
         turns_run = {"codex": 0, "claude": 0}
         stall_streak = {"codex": 0, "claude": 0}
+        pending_handoff_target: str | None = None
 
         try:
             while True:
@@ -1620,7 +1794,18 @@ def main() -> int:
                             last_successful_gate=f"{time.strftime('%Y-%m-%d %H:%M:%S')} {active_name} turn completed ({kind})",
                             event=f"{active_name.capitalize()} turn completed ({kind})",
                         )
+                        if kind == "HANDOFF":
+                            pending_handoff_target = handoff_target(detail)
+                            if pending_handoff_target is None:
+                                bus.update(state="FAILED", event="Malformed HANDOFF outcome (missing valid target)")
+                                return 1
+                            bus.update(event=f"{active_name.capitalize()} requested handoff to {pending_handoff_target.capitalize()}")
+                            break
                         if kind == "HUMAN_GATE":
+                            if human_gate_is_provider_recoverable(detail):
+                                pending_handoff_target = preferred
+                                bus.update(event="Provider-bound HUMAN_GATE converted to automatic recovery")
+                                break
                             bus.update(state="HUMAN_GATE", human_gate=detail, current_action="Waiting for human", event=f"HUMAN_GATE: {detail}")
                             return 0
                         if kind == "COMPLETE" or (args.max_turns and state["turn_count"] >= args.max_turns):
@@ -1635,6 +1820,14 @@ def main() -> int:
                                 f"{active_name} produced {STALL_THRESHOLD} consecutive no-op turns "
                                 f"with no assistant text and no recorded tool activity"
                             )
+                        # A productive turn is the safe boundary for a
+                        # preferred-provider return. Probe only now; never
+                        # interrupt a running Claude turn.
+                        recovered = refresh_provider_availability(bus, instances, [preferred])
+                        if should_return_to_preferred(bus.data, active_name, preferred, recovered):
+                            pending_handoff_target = preferred
+                            bus.update(event=f"Preferred provider {preferred.capitalize()} recovered; rotating at turn boundary")
+                            break
                         prompt = build_continue_prompt(active_name, bus.data)
                 except UsageResetRequired as error:
                     status_label = getattr(error, "status_label", "USAGE_EXHAUSTED")
@@ -1647,6 +1840,7 @@ def main() -> int:
                     agent.deactivate()
 
                 bus.update(event="Checkpoint saved")
+                reconcile_host_lock_owner(bus)
 
                 def usable(name: str) -> bool:
                     return is_agent_usable(bus.data.get(name, {}), name in instances)
@@ -1654,7 +1848,16 @@ def main() -> int:
                 def pick_ready(current: str) -> str | None:
                     return pick_ready_agent(bus.data, set(instances), agent_order, current)
 
-                next_name = pick_ready(active_name)
+                # A structured handoff waits for its explicit target rather
+                # than silently selecting another provider. An ordinary
+                # exhaustion rotation remains free to use the best ready one.
+                next_name = pending_handoff_target
+                if next_name is not None:
+                    refresh_provider_availability(bus, instances, [next_name])
+                    if not is_agent_usable(bus.data.get(next_name, {}), next_name in instances):
+                        next_name = None
+                else:
+                    next_name = pick_ready(active_name)
                 if next_name is None:
                     # Neither provider usable: wait and retry instead of exiting.
                     waiting_state = "WAITING_FOR_AGENT_CAPACITY" if len(instances) > 1 else "WAITING_FOR_USAGE_RESET"
@@ -1662,7 +1865,14 @@ def main() -> int:
                     while True:
                         if shutdown_event.is_set():
                             raise Shutdown()
-                        next_name = pick_ready(active_name)
+                        if pending_handoff_target is not None:
+                            refresh_provider_availability(bus, instances, [pending_handoff_target])
+                            next_name = pending_handoff_target if is_agent_usable(bus.data.get(pending_handoff_target, {}), pending_handoff_target in instances) else None
+                        else:
+                            # An elapsed reset may occur while waiting, so
+                            # reconcile both providers before choosing.
+                            refresh_provider_availability(bus, instances)
+                            next_name = pick_ready(active_name)
                         if next_name is not None:
                             break
                         # Conservative bounded poll: previously min(...,30) made this
@@ -1679,6 +1889,7 @@ def main() -> int:
                 else:
                     bus.update(event=f"Resuming {active_name.capitalize()} after usage reset")
                 active_name = next_name
+                pending_handoff_target = None
                 continue
         except Shutdown:
             bus.update(state="STOPPING", current_action="Finishing shutdown", event="Ctrl+C received, shutting down")

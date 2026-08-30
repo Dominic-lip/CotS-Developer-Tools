@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -275,6 +276,16 @@ class TestFailedTurnClassification(unittest.TestCase):
         self.assertEqual(kind, "HUMAN_GATE")
         self.assertEqual(detail, "needs a human decision")
 
+    def test_structured_handoff_is_not_a_human_gate(self):
+        text = "SUPERVISOR_OUTCOME: HANDOFF\nSUPERVISOR_TARGET_AGENT: codex\nSUPERVISOR_HANDOFF_REASON: live MCP proof requires Codex"
+        kind, detail = sup.turn_outcome(text)
+        self.assertEqual(kind, "HANDOFF")
+        self.assertEqual(sup.handoff_target(detail), "codex")
+
+    def test_provider_bound_human_gate_is_recoverable_but_real_decision_is_not(self):
+        self.assertTrue(sup.human_gate_is_provider_recoverable("Codex reset passed but provider handoff is pending"))
+        self.assertFalse(sup.human_gate_is_provider_recoverable("Choose whether to delete the production map"))
+
 
 # ---------------------------------------------------------------------------
 # 3. Claude usage exhaustion classification against captured/representative
@@ -348,6 +359,20 @@ class TestProviderRotation(unittest.TestCase):
     def test_not_configured_agent_is_never_usable(self):
         self.assertFalse(sup.is_agent_usable({"status": "IDLE"}, configured=False))
 
+    def test_future_reset_is_not_due_for_probe(self):
+        self.assertFalse(sup.provider_due_for_probe({"status": "USAGE_EXHAUSTED", "reset_at": time.time() + 60}))
+
+    def test_elapsed_reset_is_due_for_one_probe(self):
+        now = time.time()
+        self.assertTrue(sup.provider_due_for_probe({"status": "USAGE_EXHAUSTED", "reset_at": now - 1}, now))
+        self.assertFalse(sup.provider_due_for_probe({"status": "USAGE_EXHAUSTED", "reset_at": now - 1, "last_availability_probe_at": now}, now))
+
+    def test_preferred_return_requires_real_recovery_at_safe_boundary(self):
+        checkpoint = {"codex": {"status": "READY"}}
+        self.assertTrue(sup.should_return_to_preferred(checkpoint, "claude", "codex", {"codex"}))
+        self.assertFalse(sup.should_return_to_preferred(checkpoint, "claude", "codex", set()))
+        self.assertFalse(sup.should_return_to_preferred(checkpoint, "codex", "codex", {"codex"}))
+
 
 # ---------------------------------------------------------------------------
 # 7. Hot-loop / no-op circuit breaker.
@@ -399,6 +424,26 @@ class TestStaleCheckpointFields(NullStatusBusIO):
         bus.update(state="HUMAN_GATE", human_gate="needs a human decision")
         self.assertEqual(bus.data["human_gate"], "needs a human decision")
 
+    def test_successful_availability_probe_clears_stale_reset_and_error(self):
+        class ProbeOK:
+            def probe_availability(self): pass
+        bus = sup.StatusBus({"codex": {"status": "USAGE_EXHAUSTED", "reset_at": time.time() - 1, "last_error": "usageLimitExceeded"}})
+        recovered = sup.refresh_provider_availability(bus, {"codex": ProbeOK()}, ["codex"])
+        self.assertEqual(recovered, {"codex"})
+        self.assertEqual(bus.data["codex"]["status"], "READY")
+        self.assertIsNone(bus.data["codex"]["reset_at"])
+        self.assertIsNone(bus.data["codex"]["last_error"])
+
+    def test_still_exhausted_probe_updates_real_response(self):
+        class ProbeLimited:
+            def probe_availability(self):
+                raise sup.UsageResetRequired("new_limit", time.time() + 120)
+        bus = sup.StatusBus({"codex": {"status": "USAGE_EXHAUSTED", "reset_at": time.time() - 1}})
+        sup.refresh_provider_availability(bus, {"codex": ProbeLimited()}, ["codex"])
+        self.assertEqual(bus.data["codex"]["status"], "USAGE_EXHAUSTED")
+        self.assertEqual(bus.data["codex"]["last_error"], "new_limit")
+        self.assertGreater(bus.data["codex"]["reset_at"], time.time())
+
 
 # ---------------------------------------------------------------------------
 # 9. Task/phase reconciliation.
@@ -428,6 +473,28 @@ class TestTaskReconciliation(NullStatusBusIO):
         bus = sup.StatusBus({"task": None, "phase": None})
         sup.reconcile_task_phase(bus, None)
         self.assertEqual(bus.data["task"], "RECONCILING")
+
+    def test_provider_neutral_task_owner(self):
+        self.assertEqual(sup.supervisor_task_owner("TASK-012"), "supervisor-task-012")
+
+
+class TestHostLockTransfer(unittest.TestCase):
+    def test_transfer_is_atomic_and_preserves_single_owner(self):
+        spec = importlib.util.spec_from_file_location("cots_host_mcp_test", SCRIPTS_DIR / "CotSHostMcp.py")
+        host = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(host)
+        with tempfile.TemporaryDirectory() as directory:
+            original_dir, original_lock = host.STATE_DIR, host.LOCK_FILE
+            host.STATE_DIR = Path(directory)
+            host.LOCK_FILE = host.STATE_DIR / "mutation-lock.local.json"
+            try:
+                host.acquire({"agent_id": "codex-task-012"})
+                result = host.transfer_lock({"agent_id": "codex-task-012", "target_agent_id": "supervisor-task-012"})
+                self.assertTrue(result["success"])
+                self.assertEqual(host.lock_owner(), "supervisor-task-012")
+                self.assertFalse(host.acquire({"agent_id": "claude-task-012"})["success"])
+            finally:
+                host.STATE_DIR, host.LOCK_FILE = original_dir, original_lock
 
 
 # ---------------------------------------------------------------------------
