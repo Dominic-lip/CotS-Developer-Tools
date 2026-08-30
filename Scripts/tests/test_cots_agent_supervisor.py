@@ -308,6 +308,15 @@ class TestFailedTurnClassification(unittest.TestCase):
         self.assertEqual(kind, "HANDOFF")
         self.assertEqual(sup.handoff_target(detail), "codex")
 
+    def test_structured_recoverable_gate_preserves_category_reason_and_action(self):
+        text = ("SUPERVISOR_OUTCOME: RECOVERABLE_GATE\n"
+                "SUPERVISOR_GATE_CATEGORY: RECOVERABLE_VALIDATION_TOPOLOGY\n"
+                "SUPERVISOR_GATE_REASON: recursive provider invocation\n"
+                "SUPERVISOR_RECOMMENDED_ACTION: use active adapter")
+        kind, detail = sup.turn_outcome(text)
+        self.assertEqual(kind, "RECOVERABLE_GATE")
+        self.assertEqual(detail, "RECOVERABLE_VALIDATION_TOPOLOGY|recursive provider invocation|use active adapter")
+
     def test_waiting_checkpoint_restores_pending_structured_handoff(self):
         state = {
             "state": "WAITING_FOR_AGENT_CAPACITY",
@@ -484,6 +493,12 @@ class TestStaleCheckpointFields(NullStatusBusIO):
         bus = sup.StatusBus({"state": "STARTING"})
         bus.update(state="HUMAN_GATE", human_gate="needs a human decision")
         self.assertEqual(bus.data["human_gate"], "needs a human decision")
+
+    def test_recoverable_gate_clears_when_leaving_recoverable_gate_state(self):
+        bus = sup.StatusBus({"state": "STARTING"})
+        bus.update(state="RECOVERABLE_GATE", recoverable_gate={"category": "RECOVERABLE_HOST_MCP"})
+        bus.update(state="RUNNING_CODEX")
+        self.assertIsNone(bus.data["recoverable_gate"])
 
     def test_successful_availability_probe_clears_stale_reset_and_error(self):
         class ProbeOK:

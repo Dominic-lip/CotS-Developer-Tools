@@ -14,7 +14,7 @@ Typical agent sequence: acquire a stable agent ID, close ToolLab, build, run tes
 
 ## Persistent Codex supervisor (TASK-008B)
 
-`Scripts\Launch-CotS-Agents.bat` starts `CotSAgentSupervisor.py` by default;
+`Scripts\Launch-CotS-Agents.bat` starts `CotSFactoryController.py` by default;
 pass `manual` only for an intentionally interactive Codex CLI. The supervisor
 owns Codex App Server, stores a durable thread/checkpoint in `.cots`, and sends
 the required continuation prompt after each completed turn. A provider's
@@ -89,6 +89,27 @@ introduced only by recursive provider invocation is an unsupported validation
 topology, not a `HUMAN_GATE`, if the active first-party adapter can produce the
 equivalent acceptance evidence. Standalone launchers remain covered by their
 normal syntax/dry-run checks.
+
+### Factory recovery controller
+
+`Scripts/CotSFactoryController.py` is the outer controller started by the
+normal launcher. It owns only the exact `CotSHostMcp.py` and
+`CotSAgentSupervisor.py` child processes it starts; it has no shell endpoint,
+arbitrary executable option, or arbitrary PID control. A pre-existing healthy
+Host MCP is attached read-only rather than killed.
+
+Supervisor agents may emit `SUPERVISOR_OUTCOME: RECOVERABLE_GATE` with a
+structured category, exact observed reason, and recommended action. The
+controller records the checkpoint, provider state, fixed Git inspection, Host
+and Unreal readiness, and bounded protocol/event-log tails. It fingerprints
+the incident and permits at most three repair turns (the third prefers the
+alternate provider). A repair is a one-turn supervisor session with an
+evidence-backed, infrastructure-only specification; it must validate and use
+the existing safe Git completion wrapper before claiming success. The factory
+then restarts its exact owned supervisor and, when Host code changed, its exact
+owned Host MCP process. Human-required authentication, secrets, payments, or
+genuine product decisions remain terminal; unknown gates fail closed rather
+than being guessed as recoverable.
 
 ### Usage-limit detection, failed-turn classification, and the hot-loop breaker
 

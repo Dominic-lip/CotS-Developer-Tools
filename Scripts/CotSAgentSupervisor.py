@@ -132,8 +132,12 @@ SUPERVISOR_OUTCOME: CONTINUE
 HUMAN_GATE: <reason>
 SUPERVISOR_OUTCOME: COMPLETE
 SUPERVISOR_OUTCOME: HANDOFF
+SUPERVISOR_OUTCOME: RECOVERABLE_GATE
 SUPERVISOR_TARGET_AGENT: codex|claude
 SUPERVISOR_HANDOFF_REASON: <provider-specific reason>
+SUPERVISOR_GATE_CATEGORY: RECOVERABLE_PROVIDER|RECOVERABLE_HOST_MCP|RECOVERABLE_SUPERVISOR|RECOVERABLE_UNREAL_LIFECYCLE|RECOVERABLE_BUILD_TEST|RECOVERABLE_VALIDATION_TOPOLOGY|RECOVERABLE_STALE_STATE
+SUPERVISOR_GATE_REASON: <exact observed reason>
+SUPERVISOR_RECOMMENDED_ACTION: <bounded repair action>
 Also emit, each on its own line whenever known, SUPERVISOR_TASK: <task id>
 and SUPERVISOR_PHASE: <short current phase>. Do not stop for routine
 reporting."""
@@ -435,7 +439,10 @@ class StatusBus:
     # state; leaving that state clears them so a stale value (e.g. an old
     # human_gate reason surviving into a later CONTINUING/RUNNING state)
     # never misleads a later reader of the checkpoint or dashboard.
-    STATE_SCOPED_FIELDS = {"HUMAN_GATE": ("human_gate",), "FAILED": ("failure",)}
+    STATE_SCOPED_FIELDS = {
+        "HUMAN_GATE": ("human_gate",), "FAILED": ("failure",),
+        "RECOVERABLE_GATE": ("recoverable_gate",),
+    }
 
     def update(self, event: str | None = None, **fields: Any) -> None:
         with self.lock:
@@ -734,6 +741,13 @@ def text_from(turn: dict[str, Any]) -> str:
 
 
 def turn_outcome(text: str) -> tuple[str, str]:
+    if "SUPERVISOR_OUTCOME: RECOVERABLE_GATE" in text:
+        category = re.search(r"^SUPERVISOR_GATE_CATEGORY:\s*(RECOVERABLE_[A-Z_]+)\s*$", text, re.MULTILINE)
+        reason = re.search(r"^SUPERVISOR_GATE_REASON:\s*(.+)$", text, re.MULTILINE)
+        action = re.search(r"^SUPERVISOR_RECOMMENDED_ACTION:\s*(.+)$", text, re.MULTILINE)
+        if category and reason:
+            return "RECOVERABLE_GATE", "|".join((category.group(1), reason.group(1).strip(), action.group(1).strip() if action else "repair"))
+        return "RECOVERABLE_GATE", ""
     if "SUPERVISOR_OUTCOME: HANDOFF" in text:
         target_match = re.search(r"^SUPERVISOR_TARGET_AGENT:\s*(codex|claude)\s*$", text, re.MULTILINE | re.IGNORECASE)
         reason_match = re.search(r"^SUPERVISOR_HANDOFF_REASON:\s*(.+)$", text, re.MULTILINE)
@@ -2024,6 +2038,19 @@ def main() -> int:
                             bus.update(pending_handoff_target=pending_handoff_target,
                                        event=f"{active_name.capitalize()} requested handoff to {pending_handoff_target.capitalize()}")
                             break
+                        if kind == "RECOVERABLE_GATE":
+                            category, separator, remainder = detail.partition("|")
+                            reason, separator2, action = remainder.partition("|") if separator else ("", "", "")
+                            if not category or not reason or not separator2:
+                                bus.update(state="FAILED", failure="malformed_recoverable_gate", event="Malformed RECOVERABLE_GATE outcome")
+                                return 1
+                            bus.update(
+                                state="RECOVERABLE_GATE",
+                                recoverable_gate={"category": category, "reason": reason, "recommended_action": action},
+                                current_action="Awaiting Factory Controller recovery",
+                                event=f"RECOVERABLE_GATE: {category}: {reason}",
+                            )
+                            return 0
                         if kind == "HUMAN_GATE":
                             if human_gate_is_provider_recoverable(detail):
                                 pending_handoff_target = preferred
