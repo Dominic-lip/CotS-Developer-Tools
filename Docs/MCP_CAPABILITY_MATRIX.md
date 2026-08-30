@@ -19,8 +19,39 @@ Claude Code 2.1.251 was present but had no configured MCP servers. `claude mcp a
 --transport http unreal-native-audit http://127.0.0.1:8000/mcp` reported that it had
 written the project-local setting, but both `claude mcp get` and `claude mcp list`
 immediately reported no configured server. The required independent Claude critical-read
-repeat therefore remains unverified; this is a client/configuration reliability issue,
-not evidence that the UE endpoint is unavailable.
+repeat therefore remained unverified at that time; this was a client/configuration
+reliability issue, not evidence that the UE endpoint was unavailable.
+
+**Update, 2026-08-30 (TASK-003/TASK-004 follow-up):** the checked-in `.mcp.json`
+and `ToolLab/.mcp.json` project configuration (rather than a local `claude mcp
+add`) made the `unreal-mcp` server persistent, and Claude independently
+completed both required proofs against the same running `CotSToolLab` editor
+this audit used:
+
+- `Docs/Validation/TASK-003_MCP_CONNECTIVITY.md` — the full TASK-003
+  connection/read proof (toolset enumeration, engine version `5.8.1-56057345+++UE5+Release-5.8`,
+  project `CotSToolLab`, current level `/Temp/Untitled_1`, no actor selected).
+- Standby critical-read compatibility sample for this task (per "Cross-agent
+  validation" below), all read-only, no mutation, no repeat of the full audit:
+  - `EditorAppToolset.GetCameraTransform` → returned the live viewport camera
+    transform, confirming viewport inspection matches Codex's row.
+  - `AutomationTestToolset.DiscoverTests` → `{"status": "ready"}`, matching
+    Codex's result for this row.
+  - `AssetTools.find_assets(folder_path="/Game", name="")` → returned
+    `/Game/CotSAutonomousProof/BP_CodexProofActor` and
+    `/Game/CotSAutonomousProof/Maps/M_CodexProof` (the existing TASK-012 Codex
+    proof assets), confirming asset search sees real project content from a
+    second client.
+  - `LogsToolset.GetLogEntries(category="", pattern="", maxEntries=5)` →
+    returned live `LogModelContextProtocol` entries for Claude's own preceding
+    tool calls, confirming log retrieval. (Note: the tool's `category`
+    parameter defaults to the literal string `"LogsToolset"`, which is not a
+    registered log category and raises `Log category 'LogsToolset' not
+    found.` — callers must pass `category: ""` explicitly for an unfiltered
+    read; this is a minor default-value defect worth fixing if a CotS wrapper
+    is ever built around this tool.)
+
+No asset, actor, or level was created, changed, or deleted by this sample.
 
 | Capability | Result | Tested client(s) and exact native tool(s) | Verified result / limits | CotS high-level tool? |
 |---|---|---|---|---|

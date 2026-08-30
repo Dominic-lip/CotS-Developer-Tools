@@ -6,7 +6,7 @@
     {"id":"TASK-001","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-001_RUNNER_PROOF.md: Claude runner and active Codex adapter harmless-read proofs"]},
     {"id":"TASK-002","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-002_TOOLLAB_PROOF.md: canonical build, native editor inspection, and graceful lifecycle proof"]},
     {"id":"TASK-003","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-003_MCP_CONNECTIVITY.md: independent Codex and Claude native Unreal MCP connection/read proofs against the same running CotSToolLab editor"]},
-    {"id":"TASK-004","status":"PARTIAL"},
+    {"id":"TASK-004","status":"COMPLETE_VERIFIED","evidence":["Docs/MCP_CAPABILITY_MATRIX.md: Codex full audit plus 2026-08-30 Claude standby critical-read compatibility sample (viewport, automation discovery, asset search, logs)"]},
     {"id":"TASK-005","status":"COMPLETE_BUT_EVIDENCE_MISSING"},
     {"id":"TASK-006","status":"COMPLETE_BUT_EVIDENCE_MISSING"},
     {"id":"TASK-007","status":"COMPLETE_VERIFIED","evidence":["a9d1d94: Docs/EXECUTION_BRIDGE.md"]},
