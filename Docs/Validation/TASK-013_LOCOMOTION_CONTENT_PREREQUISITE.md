@@ -179,13 +179,43 @@ returned `Result: Succeeded`, exit 0. Fixed Host `RunCotSAutomation` operation
 `3e27d97c-4b71-433b-beb2-d80f05ee81bb` returned exit 0; its Host lock was
 released under `supervisor-task-013`.
 
+## Sixth increment: guarded locomotion Blend Space authoring
+
+Two typed mutation operations now cover the Blend Space authoring boundary:
+
+- `CreateDisposableLocomotionBlendSpace` creates only under
+  `/Game/CotSMutationLive/`, uses UE's `UBlendSpaceFactoryNew`, and configures
+  the verified editable `UBlendSpace.BlendParameters` contract as `Speed`
+  (`0..600`, six divisions) and `Direction` (`-180..180`, eight divisions).
+  The protected engine property is accessed only after runtime reflection
+  confirms its `FBlendParameter[3]` type and cardinality, then normal editor
+  change notifications and sample validation are invoked.
+- `AddLocomotionBlendSpaceSample` accepts only an exact-skeleton
+  `UAnimSequence`, finite coordinates inside those configured axes, and a
+  Blend Space in the same disposable root. It refuses duplicate samples and
+  reports the exact coordinate for independent inspection.
+
+The operation accepts an explicit preview mesh, or asks the Skeleton's native
+preview resolver when that argument is empty. The deliberately minimal
+Mannequin import exposes a real prerequisite: its Skeleton resolves its
+configured preview to missing `SKM_Quinn_Simple`. The dry-run automation test
+therefore asserts a safe refusal rather than fabricating a mesh or writing an
+incomplete asset. This is why no Blend Space was created in this increment.
+
+Canonical `Build-ToolLab.cmd` succeeded (`Result: Succeeded`, exit 0). Fixed
+Host `RunCotSAutomation` operation `d3f88bbc-7579-46dd-bc64-05fa4a046e87`
+returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
+CODE: 0`. The Host lock was released under `supervisor-task-013`.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
   locomotion content or to check compatibility against it).
 - Configure a disposable IK Retargeter with a genuine distinct target and
-  perform/inspect/clean up a guarded batch retarget proof; implement Blend Space create/configure,
+  perform/inspect/clean up a guarded batch retarget proof; provide a valid
+  exact-skeleton preview mesh and create/inspect/clean up the guarded Blend
+  Space; implement AnimBP/state-machine create/configure,
   AnimBP/state-machine create/configure, root-motion/IK policy checks,
   locomotion validation and test running. (Skeleton compatibility inspection
   and duplicate-name detection — via the pre-existing `FindDuplicateNames` —

@@ -196,6 +196,10 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TSharedPtr<FJsonObject> BatchGuardJson;
     TestTrue(TEXT("Empty retarget batch returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::BatchRetargetAnimationAssets({}, TEXT("/Game/Missing.Missing"), TEXT("/Game/CotSMutationLive/Retargeted"), true)), BatchGuardJson));
     TestFalse(TEXT("Empty retarget batch is rejected before mutation"), BatchGuardJson.IsValid() && BatchGuardJson->GetBoolField(TEXT("success")));
+
+    TSharedPtr<FJsonObject> BlendSpaceDryRunJson;
+    TestTrue(TEXT("Disposable locomotion Blend Space dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::CreateDisposableLocomotionBlendSpace(TEXT("/Game/CotSMutationLive/BS_AutomationPreview.BS_AutomationPreview"), SkeletonPath, FString(), true)), BlendSpaceDryRunJson));
+    TestFalse(TEXT("Disposable locomotion Blend Space dry-run rejects the imported Skeleton's unresolved preview mesh"), BlendSpaceDryRunJson.IsValid() && BlendSpaceDryRunJson->GetBoolField(TEXT("success")));
     return true;
 }
 

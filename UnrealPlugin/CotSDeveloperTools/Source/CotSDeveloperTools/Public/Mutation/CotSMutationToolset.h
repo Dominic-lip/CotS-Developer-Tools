@@ -19,6 +19,10 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString DuplicateAsset(const FString& SourceObjectPath, const FString& DestinationObjectPath, bool bDryRun = false);
     /** Runs UE 5.8's native duplicate-and-retarget operation only into /Game/CotSMutationLive/, after exact-path and skeleton preflight. */
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString BatchRetargetAnimationAssets(const TArray<FString>& SourceAssetPaths, const FString& RetargeterPath, const FString& TargetPath, bool bDryRun = false);
+    /** Creates a disposable 2D locomotion Blend Space with typed Speed and Direction axes; PreviewMeshPath may be empty to use the Skeleton's native preview-mesh resolver. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString CreateDisposableLocomotionBlendSpace(const FString& ObjectPath, const FString& SkeletonPath, const FString& PreviewMeshPath, bool bDryRun = false);
+    /** Adds one exact-skeleton animation sequence to a disposable locomotion Blend Space at a Speed/Direction coordinate. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString AddLocomotionBlendSpaceSample(const FString& BlendSpacePath, const FString& AnimationPath, double Speed, double Direction, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString DeleteDisposableAsset(const FString& ObjectPath, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString SaveAsset(const FString& ObjectPath, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString SetCurveEventFlag(const FString& ObjectPath, bool bIsEventCurve, bool bDryRun = false);

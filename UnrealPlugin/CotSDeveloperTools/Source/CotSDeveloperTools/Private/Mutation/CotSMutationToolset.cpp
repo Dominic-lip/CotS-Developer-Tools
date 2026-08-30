@@ -2,6 +2,8 @@
 
 #include "AssetToolsModule.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/BlendSpace.h"
 #include "Components/SceneComponent.h"
 #include "Core/CotSEditorMutationScope.h"
 #include "Core/CotSOperationResult.h"
@@ -15,6 +17,7 @@
 #include "EngineUtils.h"
 #include "EngineUtils.h"
 #include "Factories/CurveFactory.h"
+#include "Factories/BlendSpaceFactoryNew.h"
 #include "GameFramework/Actor.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Misc/PackageName.h"
@@ -22,6 +25,7 @@
 #include "Retargeter/IKRetargeter.h"
 #include "Subsystems/EditorActorSubsystem.h"
 #include "UObject/SoftObjectPath.h"
+#include "UObject/UnrealType.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CotSMutationToolset)
 
@@ -61,6 +65,37 @@ bool IsDisposableRetargetTargetPath(const FString& Path)
     return Path.StartsWith(DisposableRoot, ESearchCase::CaseSensitive)
         && FPackageName::IsValidLongPackageName(Path, false)
         && !Path.Contains(TEXT("."));
+}
+
+bool IsDisposableAssetPath(const FString& Path)
+{
+    return IsExactGameObjectPath(Path) && Path.StartsWith(DisposableRoot, ESearchCase::CaseSensitive);
+}
+
+bool ConfigureLocomotionBlendSpace(UBlendSpace* BlendSpace)
+{
+    FStructProperty* ParametersProperty = FindFProperty<FStructProperty>(UBlendSpace::StaticClass(), TEXT("BlendParameters"));
+    if (!ParametersProperty || ParametersProperty->Struct != FBlendParameter::StaticStruct() || ParametersProperty->ArrayDim != 3) { return false; }
+
+    const FName AxisNames[] = { TEXT("Speed"), TEXT("Direction") };
+    const float AxisMins[] = { 0.0f, -180.0f };
+    const float AxisMaxs[] = { 600.0f, 180.0f };
+    const int32 AxisGrids[] = { 6, 8 };
+    BlendSpace->PreEditChange(ParametersProperty);
+    for (int32 Index = 0; Index < 2; ++Index)
+    {
+        FBlendParameter* Parameter = ParametersProperty->ContainerPtrToValuePtr<FBlendParameter>(BlendSpace, Index);
+        if (!Parameter) { return false; }
+        Parameter->DisplayName = AxisNames[Index].ToString();
+        Parameter->Min = AxisMins[Index];
+        Parameter->Max = AxisMaxs[Index];
+        Parameter->GridNum = AxisGrids[Index];
+        Parameter->bSnapToGrid = false;
+        Parameter->bWrapInput = false;
+    }
+    BlendSpace->PostEditChange();
+    BlendSpace->ValidateSampleData();
+    return true;
 }
 
 FString Finish(FCotSOperationResult& Result, bool bChanged, bool bUndoable, const FString& Note = FString())
@@ -222,6 +257,76 @@ FString UCotSMutationToolset::BatchRetargetAnimationAssets(const TArray<FString>
     Result.Data->SetArrayField(TEXT("output_assets"), OutputPaths);
     Result.Validation.Add(TEXT("re-inspect every output asset and save only after review"));
     return Finish(Result, true, false, TEXT("Native batch retarget is package-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::CreateDisposableLocomotionBlendSpace(const FString& ObjectPath, const FString& SkeletonPath, const FString& PreviewMeshPath, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.CreateDisposableLocomotionBlendSpace");
+    if (!IsDisposableAssetPath(ObjectPath)) { return FCotSOperationResult::Fail(Op, TEXT("outside_disposable_scope"), TEXT("Blend Space creation is restricted to /Game/CotSMutationLive/ exact object paths."), bDryRun).ToJson(); }
+    USkeleton* Skeleton = Cast<USkeleton>(LoadExactAsset(SkeletonPath));
+    USkeletalMesh* PreviewMesh = PreviewMeshPath.IsEmpty() ? (Skeleton ? Skeleton->GetPreviewMesh(true) : nullptr) : Cast<USkeletalMesh>(LoadExactAsset(PreviewMeshPath));
+    if (!Skeleton || !PreviewMesh || PreviewMesh->GetSkeleton() != Skeleton)
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("invalid_skeleton_or_preview_mesh"), TEXT("SkeletonPath must resolve; PreviewMeshPath must resolve, or its empty value must let UE resolve the Skeleton's preview mesh; the mesh must use that exact skeleton."), bDryRun).ToJson();
+    }
+    FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath, SkeletonPath);
+    Result.AddAffectedObject(PreviewMesh->GetPathName());
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("object_path"), ObjectPath);
+    Result.Data->SetStringField(TEXT("skeleton"), SkeletonPath);
+    Result.Data->SetStringField(TEXT("preview_mesh"), PreviewMesh->GetPathName());
+    Result.Data->SetStringField(TEXT("speed_axis"), TEXT("0..600"));
+    Result.Data->SetStringField(TEXT("direction_axis"), TEXT("-180..180"));
+    if (UObject* Existing = LoadExactAsset(ObjectPath))
+    {
+        if (Existing->IsA<UBlendSpace>()) { Result.Validation.Add(TEXT("already_exists_with_requested_class")); return Finish(Result, false, false, TEXT("Blend Space creation is package-backed and not transaction-backed.")); }
+        return FCotSOperationResult::Fail(Op, TEXT("destination_collision"), TEXT("The exact path is occupied by a different asset class."), bDryRun).ToJson();
+    }
+    if (bDryRun) { Result.Validation.Add(TEXT("validated_disposable_blend_space_target")); return Finish(Result, true, false, TEXT("Blend Space creation is package-backed and not transaction-backed.")); }
+
+    const FString ObjectName = FPackageName::ObjectPathToObjectName(ObjectPath);
+    const FString PackagePath = FPackageName::ObjectPathToPackageName(ObjectPath).LeftChop(ObjectName.Len() + 1);
+    UBlendSpaceFactoryNew* Factory = NewObject<UBlendSpaceFactoryNew>();
+    Factory->TargetSkeleton = Skeleton;
+    Factory->PreviewSkeletalMesh = PreviewMesh;
+    UBlendSpace* BlendSpace = Cast<UBlendSpace>(FAssetToolsModule::GetModule().Get().CreateAsset(ObjectName, PackagePath, UBlendSpace::StaticClass(), Factory));
+    if (!BlendSpace || !BlendSpace->GetPathName().Equals(ObjectPath, ESearchCase::CaseSensitive)) { return FCotSOperationResult::Fail(Op, TEXT("create_failed"), TEXT("UE could not create the requested Blend Space.")).ToJson(); }
+    BlendSpace->Modify();
+    if (!ConfigureLocomotionBlendSpace(BlendSpace)) { return FCotSOperationResult::Fail(Op, TEXT("blend_parameter_configuration_failed"), TEXT("UE's BlendParameters property did not match the expected typed configuration contract.")).ToJson(); }
+    BlendSpace->MarkPackageDirty();
+    Result.Validation.Add(TEXT("re-inspect Blend Space axes and sample count before save"));
+    return Finish(Result, true, false, TEXT("Blend Space creation is package-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::AddLocomotionBlendSpaceSample(const FString& BlendSpacePath, const FString& AnimationPath, double Speed, double Direction, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.AddLocomotionBlendSpaceSample");
+    UBlendSpace* BlendSpace = Cast<UBlendSpace>(LoadExactAsset(BlendSpacePath));
+    UAnimSequence* Animation = Cast<UAnimSequence>(LoadExactAsset(AnimationPath));
+    if (!BlendSpace || !IsDisposableAssetPath(BlendSpacePath)) { return FCotSOperationResult::Fail(Op, TEXT("invalid_disposable_blend_space"), TEXT("BlendSpacePath must resolve to a Blend Space under /Game/CotSMutationLive/."), bDryRun).ToJson(); }
+    if (!Animation || Animation->GetSkeleton() != BlendSpace->GetSkeleton()) { return FCotSOperationResult::Fail(Op, TEXT("animation_skeleton_mismatch"), TEXT("AnimationPath must resolve to a UAnimSequence using the Blend Space's exact skeleton."), bDryRun).ToJson(); }
+    if (!FMath::IsFinite(Speed) || !FMath::IsFinite(Direction)) { return FCotSOperationResult::Fail(Op, TEXT("invalid_sample_coordinate"), TEXT("Speed and Direction must be finite numeric values."), bDryRun).ToJson(); }
+    const FBlendParameter& SpeedAxis = BlendSpace->GetBlendParameter(0);
+    const FBlendParameter& DirectionAxis = BlendSpace->GetBlendParameter(1);
+    if (Speed < SpeedAxis.Min || Speed > SpeedAxis.Max || Direction < DirectionAxis.Min || Direction > DirectionAxis.Max)
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("sample_outside_locomotion_axes"), TEXT("Sample coordinates must be within the configured Speed (0..600) and Direction (-180..180) axes."), bDryRun).ToJson();
+    }
+    const FVector SampleValue(Speed, Direction, 0.0);
+    FCotSOperationResult Result = Start(Op, bDryRun, BlendSpacePath, AnimationPath);
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("sample_value"), SampleValue.ToString());
+    for (const FBlendSample& Existing : BlendSpace->GetBlendSamples())
+    {
+        if (Existing.Animation == Animation && Existing.SampleValue.Equals(SampleValue)) { Result.Validation.Add(TEXT("already_exists_with_requested_sample")); return Finish(Result, false, true); }
+    }
+    if (bDryRun) { Result.Validation.Add(TEXT("validated_animation_and_locomotion_axes")); return Finish(Result, true, true); }
+    FCotSEditorMutationScope Scope(FText::FromString(TEXT("CotS Add Locomotion Blend Space Sample")), BlendSpace, false);
+    BlendSpace->Modify();
+    if (BlendSpace->AddSample(Animation, SampleValue) < 0) { return FCotSOperationResult::Fail(Op, TEXT("add_sample_failed"), TEXT("UE rejected the requested Blend Space sample.")).ToJson(); }
+    BlendSpace->MarkPackageDirty();
+    Result.Validation.Add(TEXT("re-inspect sample count and save after review"));
+    return Finish(Result, true, true);
 }
 
 FString UCotSMutationToolset::DeleteDisposableAsset(const FString& ObjectPath, bool bDryRun)
