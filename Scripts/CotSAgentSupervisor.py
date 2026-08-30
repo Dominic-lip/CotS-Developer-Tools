@@ -722,6 +722,23 @@ def handoff_target(detail: str) -> str | None:
     return target if separator and target in AGENT_CLASSES else None
 
 
+def restored_handoff_target(state: dict[str, Any], configured: set[str]) -> str | None:
+    """Recover a durable HANDOFF target, including one legacy checkpoint.
+
+    Earlier checkpoints saved the structured result text but not a dedicated
+    target field.  Restricting this migration to a capacity-waiting state
+    avoids resurrecting an old handoff after a later successful rotation.
+    """
+    target = state.get("pending_handoff_target")
+    if target in configured:
+        return target
+    if state.get("state") not in ("WAITING_FOR_AGENT_CAPACITY", "WAITING_FOR_USAGE_RESET"):
+        return None
+    kind, detail = turn_outcome(str(state.get("last_output") or ""))
+    target = handoff_target(detail) if kind == "HANDOFF" else None
+    return target if target in configured else None
+
+
 PROVIDER_HUMAN_GATE_PATTERNS = (
     re.compile(r"\b(provider|codex|claude|rotation|handoff|usage|reset|capacity)\b", re.IGNORECASE),
     re.compile(r"\b(waiting|unavailable|exhausted|stalled|required|pending)\b", re.IGNORECASE),
@@ -1762,19 +1779,42 @@ def main() -> int:
         reconcile_host_lock_owner(bus)
 
         preferred = state["preferred_agent"] if state["preferred_agent"] in instances else next(iter(instances))
-        active_name = state.get("active_agent") if state.get("active_agent") in instances else preferred
+        pending_handoff_target = restored_handoff_target(state, set(instances))
+        # A structured handoff is a durable routing requirement, not merely
+        # turn-local control flow.  On restart it must still wait for its
+        # target instead of silently doing a fresh turn with the preferred
+        # provider.
+        active_name = pending_handoff_target or (state.get("active_agent") if state.get("active_agent") in instances else preferred)
         simulate_after = {
             "codex": args.simulate_codex_usage_limit_after,
             "claude": args.simulate_claude_usage_limit_after,
         }
         turns_run = {"codex": 0, "claude": 0}
         stall_streak = {"codex": 0, "claude": 0}
-        pending_handoff_target: str | None = None
 
         try:
             while True:
                 if shutdown_event.is_set():
                     raise Shutdown()
+
+                # This is the restart-safe counterpart of the post-turn
+                # HANDOFF waiting branch below.  It prevents a saved HANDOFF
+                # to an exhausted Claude from being lost and replaced by an
+                # unrelated Codex turn after a supervisor restart.
+                if pending_handoff_target is not None and active_name == pending_handoff_target and not is_agent_usable(bus.data.get(active_name, {}), active_name in instances):
+                    waiting_state = "WAITING_FOR_AGENT_CAPACITY" if len(instances) > 1 else "WAITING_FOR_USAGE_RESET"
+                    bus.update(state=waiting_state, active_agent=None, current_action="Waiting for handoff target capacity", event=f"Restoring HANDOFF to {active_name.capitalize()}; waiting for capacity")
+                    while not shutdown_event.is_set():
+                        refresh_provider_availability(bus, instances, [active_name])
+                        if is_agent_usable(bus.data.get(active_name, {}), active_name in instances):
+                            break
+                        shutdown_event.wait(capacity_recheck_wait_seconds(bus.data, set(instances)))
+                    if shutdown_event.is_set():
+                        raise Shutdown()
+                    bus.update(state="ROTATING_AGENT", active_agent=None, event=f"Handoff target {active_name.capitalize()} recovered")
+                    pending_handoff_target = None
+                    bus.update(pending_handoff_target=None)
+                    continue
 
                 agent = instances[active_name]
                 session_ref_key = "thread_id" if active_name == "codex" else "session_id"
@@ -1875,7 +1915,8 @@ def main() -> int:
                             if pending_handoff_target is None:
                                 bus.update(state="FAILED", event="Malformed HANDOFF outcome (missing valid target)")
                                 return 1
-                            bus.update(event=f"{active_name.capitalize()} requested handoff to {pending_handoff_target.capitalize()}")
+                            bus.update(pending_handoff_target=pending_handoff_target,
+                                       event=f"{active_name.capitalize()} requested handoff to {pending_handoff_target.capitalize()}")
                             break
                         if kind == "HUMAN_GATE":
                             if human_gate_is_provider_recoverable(detail):
@@ -1974,6 +2015,7 @@ def main() -> int:
                     bus.update(event=f"Resuming {active_name.capitalize()} after usage reset")
                 active_name = next_name
                 pending_handoff_target = None
+                bus.update(pending_handoff_target=None)
                 continue
         except Shutdown:
             bus.update(state="STOPPING", current_action="Finishing shutdown", event="Ctrl+C received, shutting down")

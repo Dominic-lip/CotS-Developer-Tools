@@ -282,6 +282,14 @@ class TestFailedTurnClassification(unittest.TestCase):
         self.assertEqual(kind, "HANDOFF")
         self.assertEqual(sup.handoff_target(detail), "codex")
 
+    def test_waiting_checkpoint_restores_pending_structured_handoff(self):
+        state = {
+            "state": "WAITING_FOR_AGENT_CAPACITY",
+            "last_output": "SUPERVISOR_OUTCOME: HANDOFF\nSUPERVISOR_TARGET_AGENT: claude\nSUPERVISOR_HANDOFF_REASON: independent verification",
+        }
+        self.assertEqual(sup.restored_handoff_target(state, {"codex", "claude"}), "claude")
+        self.assertIsNone(sup.restored_handoff_target({**state, "state": "RUNNING_CODEX"}, {"codex", "claude"}))
+
     def test_provider_bound_human_gate_is_recoverable_but_real_decision_is_not(self):
         self.assertTrue(sup.human_gate_is_provider_recoverable("Codex reset passed but provider handoff is pending"))
         self.assertFalse(sup.human_gate_is_provider_recoverable("Choose whether to delete the production map"))
