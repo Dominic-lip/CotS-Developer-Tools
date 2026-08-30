@@ -307,15 +307,25 @@ TOOLS = {
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, _format: str, *_args: object) -> None: pass
-    def reply(self, code: int, payload: dict[str, Any]) -> None:
+    def reply(self, code: int, payload: dict[str, Any], extra_headers: dict[str, str] | None = None) -> None:
         body = json.dumps(payload).encode("utf-8")
-        self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+        self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body)))
+        for header_name, header_value in (extra_headers or {}).items():
+            self.send_header(header_name, header_value)
+        self.end_headers(); self.wfile.write(body)
     def do_POST(self) -> None:
         if self.path != "/mcp": self.reply(404, {"error": "not_found"}); return
         try:
             request = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
             method, request_id = request.get("method"), request.get("id")
-            if method == "initialize": response = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}}, "serverInfo": {"name": "CotS Host Controller", "version": "1.0"}}
+            extra_headers: dict[str, str] = {}
+            if method == "initialize":
+                # Streamable HTTP MCP transport requires a session id on the
+                # initialize response; a compliant client otherwise has no
+                # session to carry on subsequent requests and stalls/times out
+                # instead of ever sending tools/list or tools/call.
+                extra_headers["Mcp-Session-Id"] = str(uuid.uuid4())
+                response = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}}, "serverInfo": {"name": "CotS Host Controller", "version": "1.0"}}
             elif method == "notifications/initialized": return
             elif method == "tools/list": response = {"tools": [{"name": name, "description": description, "inputSchema": {"type": "object", "properties": {"agent_id": {"type": "string"}, "timeout_seconds": {"type": "integer"}}}} for name, (description, _) in TOOLS.items()]}
             elif method == "tools/call":
@@ -323,7 +333,7 @@ class Handler(BaseHTTPRequestHandler):
                 if name not in TOOLS: raise ValueError("unknown_fixed_tool")
                 response = {"content": [{"type": "text", "text": json.dumps(TOOLS[name][1](arguments))}]}
             else: raise ValueError("method_not_found")
-            self.reply(200, {"jsonrpc": "2.0", "id": request_id, "result": response})
+            self.reply(200, {"jsonrpc": "2.0", "id": request_id, "result": response}, extra_headers)
         except Exception as error:
             self.reply(400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32602, "message": str(error)}})
 
