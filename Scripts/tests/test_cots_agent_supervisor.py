@@ -573,6 +573,51 @@ class TestStaleCheckpointFields(NullStatusBusIO):
 
 
 # ---------------------------------------------------------------------------
+# 8b. Checkpoint atomic-replace retry (WinError 5/32 lock collision).
+# ---------------------------------------------------------------------------
+
+class TestCheckpointReplaceRetry(unittest.TestCase):
+    """Reproduces the observed incident: a transient Windows lock on the
+    checkpoint file (another reader has it open for a moment) previously
+    raised PermissionError straight out of save_state() and crashed the
+    whole supervisor mid-turn."""
+
+    def test_transient_lock_is_retried_then_succeeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "state.json.tmp"
+            destination = Path(directory) / "state.json"
+            source.write_text("{}", encoding="utf-8")
+            attempts = {"count": 0}
+            real_replace = Path.replace
+
+            def flaky_replace(self, target):
+                attempts["count"] += 1
+                if attempts["count"] < 3:
+                    raise PermissionError(5, "Access is denied")
+                return real_replace(self, target)
+
+            with mock.patch.object(sup.time, "sleep", lambda _seconds: None), \
+                 mock.patch.object(Path, "replace", flaky_replace):
+                sup._replace_with_retry(source, destination)
+            self.assertEqual(attempts["count"], 3)
+            self.assertTrue(destination.exists())
+
+    def test_persistent_lock_raises_after_exhausting_attempts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "state.json.tmp"
+            destination = Path(directory) / "state.json"
+            source.write_text("{}", encoding="utf-8")
+
+            def always_denied(self, target):
+                raise PermissionError(5, "Access is denied")
+
+            with mock.patch.object(sup.time, "sleep", lambda _seconds: None), \
+                 mock.patch.object(Path, "replace", always_denied):
+                with self.assertRaises(PermissionError):
+                    sup._replace_with_retry(source, destination, attempts=3)
+
+
+# ---------------------------------------------------------------------------
 # 9. Task/phase reconciliation.
 # ---------------------------------------------------------------------------
 

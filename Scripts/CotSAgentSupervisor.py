@@ -421,11 +421,32 @@ def load_state() -> dict[str, Any]:
         return {"state": "STARTING", "turn_count": 0}
 
 
+def _replace_with_retry(source: Path, destination: Path, attempts: int = 5, delay_seconds: float = 0.05) -> None:
+    """Windows can transiently deny an atomic rename onto a destination a
+    reader (the dashboard, antivirus, another checkpoint reader) has open
+    for a moment (WinError 5/32). That is a momentary lock collision, not a
+    real failure -- retry briefly rather than crashing the whole supervisor
+    over it, which previously turned a routine checkpoint write into an
+    "Unrecoverable failure" that killed an in-progress turn.
+    """
+    last_error: OSError | None = None
+    for attempt in range(attempts):
+        try:
+            source.replace(destination)
+            return
+        except OSError as error:
+            last_error = error
+            if attempt < attempts - 1:
+                time.sleep(delay_seconds)
+    assert last_error is not None
+    raise last_error
+
+
 def save_state(value: dict[str, Any]) -> None:
     STATE.parent.mkdir(exist_ok=True)
     temporary = STATE.with_suffix(STATE.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(STATE)
+    _replace_with_retry(temporary, STATE)
 
 
 def log_event(text: str) -> None:
