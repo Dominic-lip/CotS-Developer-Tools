@@ -35,6 +35,14 @@ LOCK_FILE = STATE_DIR / "mutation-lock.local.json"
 HOST, PORT, MCP_PORT = "127.0.0.1", 8010, 8000
 STATE_GUARD = threading.RLock()
 LOGGER = logging.getLogger(__name__)
+# UnrealEditor/UBT/UBA manage their own worker-process pools and, on Windows,
+# a console-control broadcast one of them sends to "its own" process group
+# targets the entire console's process group by default -- including this
+# Host controller and, transitively, the supervisor/factory-controller/CLI
+# processes that share its console. CREATE_NEW_PROCESS_GROUP roots each
+# spawned editor/build child in its own group so that broadcast can no
+# longer reach back up and kill this server or its ancestors.
+_EDITOR_PROCESS_CREATIONFLAGS = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform.startswith("win") else 0
 
 
 class LifecycleRefused(RuntimeError):
@@ -206,7 +214,7 @@ def open_editor(arguments: dict[str, Any]) -> dict[str, Any]:
             return result({**current, "changed": False})
         if not EDITOR.is_file() or not PROJECT.is_file():
             return result(current, success=False, error="tool_lab_prerequisite_missing")
-        process = subprocess.Popen([str(EDITOR), str(PROJECT)], cwd=REPO)
+        process = subprocess.Popen([str(EDITOR), str(PROJECT)], cwd=REPO, creationflags=_EDITOR_PROCESS_CREATIONFLAGS)
         write_json(STATE_FILE, {"editor_pid": process.pid, "editor_started_at": time.time()})
     return result({"editor_pid": process.pid, "changed": True, "mcp_url": f"http://{HOST}:{MCP_PORT}/mcp"})
 
@@ -279,7 +287,7 @@ def run_fixed(arguments: dict[str, Any], command: list[str], name: str, require_
     current = status()
     if require_editor_closed and current["editor_running"]:
         return result(current, success=False, error="editor_must_be_closed")
-    completed = subprocess.run(command, cwd=REPO, capture_output=True, text=True, timeout=arguments.get("timeout_seconds", 900))
+    completed = subprocess.run(command, cwd=REPO, capture_output=True, text=True, timeout=arguments.get("timeout_seconds", 900), creationflags=_EDITOR_PROCESS_CREATIONFLAGS)
     output = (completed.stdout + completed.stderr)[-12000:]
     return result({"name": name, "exit_code": completed.returncode, "output_tail": output}, success=completed.returncode == 0, error=None if completed.returncode == 0 else f"{name}_failed")
 
