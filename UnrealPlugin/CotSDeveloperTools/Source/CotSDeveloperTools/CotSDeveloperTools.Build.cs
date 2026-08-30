@@ -18,6 +18,7 @@ public class CotSDeveloperTools : ModuleRules
             "UnrealEd",
             "AssetTools",
             "AssetRegistry",
+            "AnimGraph",
             "EditorScriptingUtilities",
             "IKRig",
             "IKRigEditor",

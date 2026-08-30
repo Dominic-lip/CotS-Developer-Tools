@@ -11,6 +11,10 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Animation/AnimBlueprint.h"
+#include "AnimGraphNode_StateMachineBase.h"
+#include "AnimationStateMachineGraph.h"
+#include "AnimStateNode.h"
+#include "AnimStateTransitionNode.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimationAsset.h"
 #include "Animation/BlendSpace.h"
@@ -348,6 +352,69 @@ FString UCotSInspectionToolset::GetAnimationAsset(const FString& ObjectPath)
         Result.Data->SetBoolField(TEXT("has_root_motion"), Sequence->HasRootMotion());
     }
     if (const UBlendSpace* BlendSpace = Cast<UBlendSpace>(Object)) { Result.Data->SetNumberField(TEXT("sample_count"), BlendSpace->GetNumberOfBlendSamples()); }
+    return Result.ToJson();
+}
+
+FString UCotSInspectionToolset::GetAnimBlueprintStateMachines(const FString& ObjectPath)
+{
+    UAnimBlueprint* Blueprint = LoadObject<UAnimBlueprint>(nullptr, *ObjectPath);
+    if (!Blueprint) { return InvalidPath(TEXT("CotS.Inspection.GetAnimBlueprintStateMachines"), ObjectPath).ToJson(); }
+
+    FCotSOperationResult Result = FCotSOperationResult::Succeed(TEXT("CotS.Inspection.GetAnimBlueprintStateMachines"));
+    Result.AddAffectedObject(PathOf(Blueprint));
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("object_path"), PathOf(Blueprint));
+    Result.Data->SetStringField(TEXT("target_skeleton"), PathOf(Blueprint->TargetSkeleton));
+    Result.Data->SetStringField(TEXT("preview_mesh"), PathOf(Blueprint->GetPreviewMesh()));
+    Result.Data->SetNumberField(TEXT("compile_status"), static_cast<uint8>(Blueprint->Status));
+    Result.Data->SetBoolField(TEXT("compiled_up_to_date"), Blueprint->IsUpToDate());
+
+    TArray<TSharedPtr<FJsonValue>> Machines;
+    for (const UEdGraph* Graph : Blueprint->UbergraphPages)
+    {
+        if (!Graph) { continue; }
+        for (const UEdGraphNode* GraphNode : Graph->Nodes)
+        {
+            const UAnimGraphNode_StateMachineBase* MachineNode = Cast<UAnimGraphNode_StateMachineBase>(GraphNode);
+            if (!MachineNode || !MachineNode->EditorStateMachineGraph) { continue; }
+            const UAnimationStateMachineGraph* MachineGraph = MachineNode->EditorStateMachineGraph;
+            TSharedRef<FJsonObject> Machine = MakeShared<FJsonObject>();
+            Machine->SetStringField(TEXT("machine_name"), MachineNode->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
+            Machine->SetStringField(TEXT("graph_path"), MachineGraph->GetPathName());
+            TArray<TSharedPtr<FJsonValue>> States;
+            TArray<TSharedPtr<FJsonValue>> Transitions;
+            for (const UEdGraphNode* StateNode : MachineGraph->Nodes)
+            {
+                if (const UAnimStateNode* State = Cast<UAnimStateNode>(StateNode))
+                {
+                    TSharedRef<FJsonObject> StateJson = MakeShared<FJsonObject>();
+                    StateJson->SetStringField(TEXT("state_name"), State->GetStateName());
+                    StateJson->SetStringField(TEXT("bound_graph"), PathOf(State->BoundGraph));
+                    StateJson->SetBoolField(TEXT("always_reset_on_entry"), State->bAlwaysResetOnEntry);
+                    States.Add(MakeShared<FJsonValueObject>(StateJson));
+                }
+                else if (const UAnimStateTransitionNode* Transition = Cast<UAnimStateTransitionNode>(StateNode))
+                {
+                    TSharedRef<FJsonObject> TransitionJson = MakeShared<FJsonObject>();
+                    const UAnimStateNodeBase* Previous = Transition->GetPreviousState();
+                    const UAnimStateNodeBase* Next = Transition->GetNextState();
+                    TransitionJson->SetStringField(TEXT("from_state"), Previous ? Previous->GetStateName() : FString());
+                    TransitionJson->SetStringField(TEXT("to_state"), Next ? Next->GetStateName() : FString());
+                    TransitionJson->SetNumberField(TEXT("crossfade_seconds"), Transition->CrossfadeDuration);
+                    TransitionJson->SetBoolField(TEXT("automatic_rule"), Transition->bAutomaticRuleBasedOnSequencePlayerInState);
+                    TransitionJson->SetBoolField(TEXT("bidirectional"), Transition->Bidirectional);
+                    Transitions.Add(MakeShared<FJsonValueObject>(TransitionJson));
+                }
+            }
+            States.Sort([](const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B) { return A->AsObject()->GetStringField(TEXT("state_name")) < B->AsObject()->GetStringField(TEXT("state_name")); });
+            Transitions.Sort([](const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B) { return A->AsObject()->GetStringField(TEXT("from_state")) < B->AsObject()->GetStringField(TEXT("from_state")); });
+            Machine->SetArrayField(TEXT("states"), States);
+            Machine->SetArrayField(TEXT("transitions"), Transitions);
+            Machines.Add(MakeShared<FJsonValueObject>(Machine));
+        }
+    }
+    Machines.Sort([](const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B) { return A->AsObject()->GetStringField(TEXT("machine_name")) < B->AsObject()->GetStringField(TEXT("machine_name")); });
+    Result.Data->SetArrayField(TEXT("state_machines"), Machines);
     return Result.ToJson();
 }
 

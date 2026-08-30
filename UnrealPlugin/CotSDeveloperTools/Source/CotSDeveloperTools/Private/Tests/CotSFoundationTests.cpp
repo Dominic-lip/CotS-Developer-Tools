@@ -1,4 +1,5 @@
 #include "Core/CotSOperationResult.h"
+#include "Animation/AnimBlueprint.h"
 #include "Execution/CotSExecutionToolset.h"
 #include "Foundation/CotSFoundationToolset.h"
 #include "Inspection/CotSInspectionToolset.h"
@@ -192,6 +193,12 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     const TSharedPtr<FJsonObject> RetargeterData = RetargeterJson->GetObjectField(TEXT("data"));
     TestFalse(TEXT("New Retargeter has no source rig"), RetargeterData->GetBoolField(TEXT("has_source_ik_rig")));
     TestFalse(TEXT("New Retargeter has no target rig"), RetargeterData->GetBoolField(TEXT("has_target_ik_rig")));
+
+    UAnimBlueprint* AnimBlueprintFixture = NewObject<UAnimBlueprint>(GetTransientPackage(), TEXT("CotSAnimBlueprintInspectionFixture"));
+    TSharedPtr<FJsonObject> AnimBlueprintJson;
+    TestTrue(TEXT("Transient AnimBlueprint state-machine inspection returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetAnimBlueprintStateMachines(AnimBlueprintFixture->GetPathName())), AnimBlueprintJson));
+    TestTrue(TEXT("Transient AnimBlueprint state-machine inspection succeeds"), AnimBlueprintJson.IsValid() && AnimBlueprintJson->GetBoolField(TEXT("success")));
+    TestEqual(TEXT("New AnimBlueprint contains no state machines"), AnimBlueprintJson->GetObjectField(TEXT("data"))->GetArrayField(TEXT("state_machines")).Num(), 0);
 
     TSharedPtr<FJsonObject> BatchGuardJson;
     TestTrue(TEXT("Empty retarget batch returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::BatchRetargetAnimationAssets({}, TEXT("/Game/Missing.Missing"), TEXT("/Game/CotSMutationLive/Retargeted"), true)), BatchGuardJson));

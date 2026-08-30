@@ -26,6 +26,8 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetReferences(const FString& ObjectPath, bool bReferencers);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetBlueprint(const FString& ObjectPath);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetAnimationAsset(const FString& ObjectPath);
+    /** Reports exact AnimBlueprint state-machine, state, and transition metadata without editing graph topology. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetAnimBlueprintStateMachines(const FString& ObjectPath);
     /** Reports the read-only source/target IK Rig assignments, retarget chains, poses, and operation-stack types for one IK Retargeter asset. */
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetIKRetargeter(const FString& ObjectPath);
     /** Resolves the skeleton for a Skeleton/SkeletalMesh/AnimationAsset/AnimBlueprint, lists its declared compatible skeletons, and (if CandidateSkeletonPath is non-empty) reports whether that candidate is compatible via UE's native skeleton-compatibility check. */
