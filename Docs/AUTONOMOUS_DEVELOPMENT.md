@@ -14,7 +14,7 @@ Typical agent sequence: acquire a stable agent ID, close ToolLab, build, run tes
 
 ## Persistent Codex supervisor (TASK-008B)
 
-`Scripts\Launch-CotS-Agents.bat` starts `CotSFactoryController.py` by default;
+`Scripts\Launch-CotS-Agents.bat` starts the deliberately small `CotSFactoryBootstrap.py` by default. Bootstrap starts and monitors `CotSFactoryController.py`; recoverable infrastructure exits create `.cots/incidents/<fingerprint>.json`, run the external bounded `CotSAgentFixIt.py` worker, then restart Factory from the preserved checkpoint. Capacity/quota waiting remains a local supervisor wait/probe and never starts FixIt. Bootstrap itself is not routinely repairable during a run.
 pass `manual` only for an intentionally interactive Codex CLI. The supervisor
 owns Codex App Server, stores a durable thread/checkpoint in `.cots`, and sends
 the required continuation prompt after each completed turn. A provider's

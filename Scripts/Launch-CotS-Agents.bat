@@ -3,7 +3,7 @@ setlocal
 if /I "%1"=="manual" goto manual_trusted
 if /I "%1"=="manual-safe" goto manual_safe
 echo You may minimize this window. Closing it stops autonomous development.
-start "CotS Autonomous Factory" cmd /k python "%~dp0CotSFactoryController.py"
+start "CotS Autonomous Factory" cmd /k python "%~dp0CotSFactoryBootstrap.py"
 exit /b
 
 :manual_trusted

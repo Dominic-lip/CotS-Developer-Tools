@@ -141,6 +141,7 @@ def render_lines(snapshot: dict[str, Any], spinner_index: int = 0, width: int | 
     if recovery_state not in {"", "IDLE", None}:
         lines += [top("Recovery"), row(f"Category: {recovery.get('category', 'unknown')}    Incident: {recovery.get('incident', 'unknown')}"),
                   row(f"Attempt {recovery.get('attempt', 0)}/3    Repairing agent: {recovery.get('repairing_agent', active_label)}"),
+                  row(f"State: {recovery_state}    Elapsed: {format_elapsed(time.time() - float(recovery.get('started_at') or snapshot.get('updated_at') or time.time()))}"),
                   row(f"Action: {recovery.get('current_action') or 'controlled repair'}"),
                   row(f"Previous failure: {recovery.get('reason') or recovery.get('previous_failure') or 'none'}"), bottom]
     lines += [top("Recent Activity")]

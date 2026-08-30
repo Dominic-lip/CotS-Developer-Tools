@@ -61,15 +61,15 @@ class TestRecoveryPolicy(unittest.TestCase):
         prompt = factory.repair_prompt({"task": "TASK-001", "reason": "broken", "checkpoint": {"compact_task_context": {"next_actions": ["fix"]}}, "codex_protocol": "x" * 9000}, 1)
         self.assertIn("BOUNDED INCIDENT EVIDENCE", prompt)
         self.assertLess(len(prompt), 8000)
-    def test_bounded_attempts_escalate_without_repair(self):
+    def test_recoverable_gate_emits_external_incident(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory, "SUPERVISOR_STATE", Path(directory) / "supervisor.json"):
             checkpoint = {"state": "HUMAN_GATE", "human_gate": "nested `codex exec` cannot reach network", "task": "TASK-001"}
             factory.SUPERVISOR_STATE.write_text(json.dumps(checkpoint), encoding="utf-8")
-            controller = factory.FactoryController(); category, reason, _ = factory.classify_gate(checkpoint)
-            controller.state["repair_attempts"][factory.incident_fingerprint(category, reason, checkpoint)] = factory.MAX_REPAIR_ATTEMPTS
-            with mock.patch.object(controller, "start_supervisor") as start:
-                self.assertFalse(controller.handle_gate(0)); start.assert_not_called()
-            self.assertEqual(controller.state["factory"], "HUMAN_REQUIRED")
+            controller = factory.FactoryController()
+            with mock.patch.object(factory, "write_incident", return_value=Path(directory) / "incident.json") as incident:
+                self.assertFalse(controller.handle_gate(0))
+            incident.assert_called_once()
+            self.assertEqual(controller._exit_code, factory.RECOVERABLE_EXIT)
 
     def test_later_production_task_prevents_completion(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -90,19 +90,12 @@ class TestOwnedProcesses(unittest.TestCase):
             controller.stop_owned(target, "supervisor")
             self.assertTrue(target.terminated); self.assertFalse(other.terminated)
 
-    def test_stop_owned_sweeps_process_tree_on_windows(self):
+    def test_stop_owned_never_sweeps_process_tree(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory.sys, "platform", "win32"), mock.patch.object(factory.subprocess, "run") as run:
             controller = factory.FactoryController(); target = FakeProcess(pid=789)
             controller.stop_owned(target, "supervisor")
-            run.assert_called_once()
-            args = run.call_args.args[0]
-            self.assertEqual(args[0], "taskkill"); self.assertIn("789", args); self.assertIn("/T", args); self.assertIn("/F", args)
-
-    def test_stop_owned_skips_taskkill_off_windows(self):
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory.sys, "platform", "linux"), mock.patch.object(factory.subprocess, "run") as run:
-            controller = factory.FactoryController(); target = FakeProcess(pid=789)
-            controller.stop_owned(target, "supervisor")
             run.assert_not_called()
+
     def test_supervisor_command_is_fixed(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory.subprocess, "Popen", return_value=FakeProcess()) as popen:
             controller = factory.FactoryController(); controller.start_supervisor("repair", "claude,codex")
@@ -183,14 +176,14 @@ class TestSupervisorLifecycleMonitoring(unittest.TestCase):
                 category, _ = controller.live_supervisor_boundary(now=1.0 + factory.WAIT_HEARTBEAT_STALE_SECONDS + 1)
                 self.assertEqual(category, factory.GateCategory.RECOVERABLE_STALE_STATE)
 
-    def test_recoverable_gate_schedules_repair(self):
+    def test_recoverable_gate_exits_for_bootstrap_fixit(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory, "SUPERVISOR_STATE", Path(directory) / "supervisor.json"):
             checkpoint = {"state": "RECOVERABLE_GATE", "recoverable_gate": {"category": "RECOVERABLE_HOST_MCP", "reason": "host unavailable", "recommended_action": "restart"}}
             factory.SUPERVISOR_STATE.write_text(json.dumps(checkpoint), encoding="utf-8")
             controller = factory.FactoryController()
-            with mock.patch.object(controller, "start_supervisor") as start, mock.patch.object(controller, "capture", return_value={"task": "TASK-004"}):
-                self.assertTrue(controller.handle_gate(0))
-                start.assert_called_once()
+            with mock.patch.object(factory, "write_incident", return_value=Path(directory) / "incident.json"):
+                self.assertFalse(controller.handle_gate(0))
+            self.assertEqual(controller._exit_code, factory.RECOVERABLE_EXIT)
 
     def test_human_required_and_false_complete_are_terminal_cleanly(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory, "SUPERVISOR_STATE", Path(directory) / "supervisor.json"):

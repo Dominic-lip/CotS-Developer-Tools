@@ -1,0 +1,18 @@
+[
+  {"name": "RUNNING_CLAUDE incorrectly classified terminal", "category": "SUPERVISOR"},
+  {"name": "WAITING_FOR_AGENT_CAPACITY incorrectly classified stale", "category": "CAPACITY_WAIT"},
+  {"name": "false Roadmap COMPLETE while incomplete tasks remain", "category": "CHECKPOINT_STATE"},
+  {"name": "unknown quota reset", "category": "CAPACITY_WAIT"},
+  {"name": "preferred provider return after reset", "category": "PROVIDER_HANDOFF"},
+  {"name": "recursive Codex-under-Codex validation", "category": "VALIDATION_TOPOLOGY"},
+  {"name": "Host MCP missing Mcp-Session-Id", "category": "HOST_MCP"},
+  {"name": "Host MCP notifications initialized response hang", "category": "HOST_MCP"},
+  {"name": "Host MCP source updated while old process remains loaded", "category": "HOST_MCP"},
+  {"name": "checkpoint atomic replace Windows lock", "category": "CHECKPOINT_STATE"},
+  {"name": "process-group kill taking down parent factory", "category": "PROCESS_LIFECYCLE"},
+  {"name": "orphaned agent child process", "category": "PROCESS_LIFECYCLE"},
+  {"name": "Claude apparently idle while actually performing streamed work", "category": "SUPERVISOR"},
+  {"name": "stale mutation lease", "category": "CHECKPOINT_STATE"},
+  {"name": "provider HANDOFF survives restart", "category": "PROVIDER_HANDOFF"},
+  {"name": "connection-reset noise during expected localhost shutdown", "category": "HOST_MCP"}
+]

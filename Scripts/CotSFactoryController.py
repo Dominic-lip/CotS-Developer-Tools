@@ -20,8 +20,10 @@ from typing import Any
 
 try:  # Supports both ``python Scripts/...`` and importlib-loaded unit tests.
     from CotSFactoryDashboard import TerminalDashboard, strip_terminal_controls
+    from CotSRecovery import RECOVERABLE_EXIT, HUMAN_REQUIRED_EXIT, IncidentCategory, write_incident
 except ModuleNotFoundError:
     from Scripts.CotSFactoryDashboard import TerminalDashboard, strip_terminal_controls
+    from Scripts.CotSRecovery import RECOVERABLE_EXIT, HUMAN_REQUIRED_EXIT, IncidentCategory, write_incident
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "Scripts"
@@ -230,6 +232,7 @@ class FactoryController:
         self._git_snapshot: dict[str, Any] = {}
         self._git_snapshot_at = 0.0
         self._normal_restart_requested = False
+        self._exit_code = 0
 
     def save(self, event: str | None = None, **fields: Any) -> None:
         self.state.update(fields)
@@ -327,13 +330,10 @@ class FactoryController:
             process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             process.kill(); process.wait(timeout=10)
-        # terminate()/kill() only end this one process. The supervisor spawns
-        # its own `claude -p`/`codex` child as a separate OS process, which
-        # Windows does not tie to its parent's lifetime, so it survives as an
-        # orphan that keeps mutating the working tree as an undetected second
-        # agent. Sweep the whole tree rooted at the owned PID to close that.
-        if sys.platform.startswith("win"):
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, check=False)
+        # Deliberately do not sweep a PID tree: an outer process group can
+        # include Bootstrap/Factory parents on Windows. Provider adapters own
+        # their child lifecycle and the durable mutation lease prevents a
+        # replacement supervisor from acquiring a concurrent writer.
         self.save(f"Owned {label} stopped")
 
     def start_supervisor(self, prompt: str | None = None, agents: str = "codex,claude") -> None:
@@ -458,6 +458,7 @@ class FactoryController:
             except ValueError as error:
                 self.mark_supervisor_stopped(checkpoint)
                 self.save(f"Completion state validation failed: {error}", factory="HUMAN_REQUIRED", supervisor_state="STOPPED")
+                self._exit_code = HUMAN_REQUIRED_EXIT
                 return False
             self.mark_supervisor_stopped(checkpoint)
             if outstanding is None:
@@ -474,15 +475,31 @@ class FactoryController:
         fingerprint = incident_fingerprint(category, reason, checkpoint)
         attempts = int(self.state["repair_attempts"].get(fingerprint, 0))
         self.save(f"Supervisor gate {category.value}: {reason}", recovery={"state": "GATED", "category": category.value, "incident": fingerprint, "attempt": attempts})
-        if category in {GateCategory.HUMAN_REQUIRED, GateCategory.TERMINAL_FAILURE} or attempts >= MAX_REPAIR_ATTEMPTS:
+        if category in {GateCategory.HUMAN_REQUIRED, GateCategory.TERMINAL_FAILURE}:
             self.save("Human-required unresolved incident", factory="HUMAN_REQUIRED", supervisor_state="STOPPED", recovery={"state": "HUMAN_REQUIRED", "category": category.value, "incident": fingerprint, "attempt": attempts, "reason": reason})
+            self._exit_code = HUMAN_REQUIRED_EXIT
             return False
-        attempts += 1
-        self.state["repair_attempts"][fingerprint] = attempts
-        evidence = self.capture(category, reason)
-        self.save("Repair turn scheduled", factory="RUNNING", supervisor_state="REPAIRING", recovery={"state": "REPAIRING", "category": category.value, "incident": fingerprint, "attempt": attempts})
-        self.start_supervisor(repair_prompt(evidence, attempts), choose_repair_agents(checkpoint))
-        return True
+        # Repair must be outside the failed component.  Bootstrap observes
+        # this durable package and invokes CotSAgentFixIt after this Factory
+        # exits; the old in-process repair-supervisor path is intentionally
+        # not used.
+        mapping = {
+            GateCategory.RECOVERABLE_HOST_MCP: IncidentCategory.HOST_MCP,
+            GateCategory.RECOVERABLE_SUPERVISOR: IncidentCategory.SUPERVISOR,
+            GateCategory.RECOVERABLE_UNREAL_LIFECYCLE: IncidentCategory.UNREAL_MCP,
+            GateCategory.RECOVERABLE_VALIDATION_TOPOLOGY: IncidentCategory.VALIDATION_TOPOLOGY,
+            GateCategory.RECOVERABLE_BUILD_TEST: IncidentCategory.BUILD_TEST,
+            GateCategory.RECOVERABLE_STALE_STATE: IncidentCategory.CHECKPOINT_STATE,
+            GateCategory.RECOVERABLE_PROVIDER: IncidentCategory.PROVIDER_HANDOFF,
+        }
+        incident = write_incident(mapping.get(category, IncidentCategory.OTHER_RECOVERABLE_INFRASTRUCTURE), reason,
+                                  affected_component="supervisor", error_code=category.value,
+                                  checkpoint=checkpoint, factory_state=self.state,
+                                  previous_repair_attempts=attempts)
+        self.save("Recoverable incident emitted for external FixIt", factory="RECOVERABLE_EXIT", supervisor_state="STOPPED",
+                  recovery={"state": "GATED", "category": category.value, "incident": incident.stem, "attempt": attempts, "reason": reason})
+        self._exit_code = RECOVERABLE_EXIT
+        return False
 
     def run(self) -> int:
         self.start_dashboard()
@@ -500,7 +517,7 @@ class FactoryController:
                     category, reason = boundary
                     exit_code = self.await_terminal_boundary(reason or "supervisor boundary")
                     if not self.handle_gate(exit_code, (category, reason or "supervisor boundary")):
-                        return 0
+                        return self._exit_code
                     repair_mode = not self._normal_restart_requested
                     self._normal_restart_requested = False
                     continue
@@ -517,7 +534,7 @@ class FactoryController:
                     self.start_supervisor()
                     continue
                 if not self.handle_gate(exit_code):
-                    return 0
+                    return self._exit_code
                 repair_mode = not self._normal_restart_requested
                 self._normal_restart_requested = False
         finally:

@@ -28,9 +28,9 @@ class TestLaunchCotSAgents(unittest.TestCase):
         self.assertNotIn("--ask-for-approval", safe)
         self.assertNotIn("--sandbox", safe)
 
-    def test_factory_path_remains_the_original_controller_launch(self):
+    def test_factory_path_uses_stable_bootstrap(self):
         factory = self.text.split("if /I \"%1\"==\"manual-safe\" goto manual_safe", 1)[1].split(":manual_trusted", 1)[0]
-        self.assertIn('start "CotS Autonomous Factory" cmd /k python "%~dp0CotSFactoryController.py"', factory)
+        self.assertIn('start "CotS Autonomous Factory" cmd /k python "%~dp0CotSFactoryBootstrap.py"', factory)
         self.assertNotIn("danger-full-access", factory)
 
 
