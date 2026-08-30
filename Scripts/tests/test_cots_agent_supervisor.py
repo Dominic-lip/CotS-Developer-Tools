@@ -818,6 +818,13 @@ class TestClaudeAgentRunTurn(unittest.TestCase):
         resume_index = captured_args[1].index("--resume")
         self.assertEqual(captured_args[1][resume_index + 1], "097a57a1-c9b9-4bae-971c-059635554f77")
 
+    def test_mcp_allowlist_exposes_only_the_fixed_host_surface_and_unreal_server(self):
+        allowed = sup.CLAUDE_ALLOWED_TOOLS.split()
+        self.assertIn("mcp__cots-host__GetToolLabStatus", allowed)
+        self.assertIn("mcp__cots-host__RunCotSAutomation", allowed)
+        self.assertIn("mcp__unreal-mcp__*", allowed)
+        self.assertFalse(any(item.startswith("mcp__cots-host__") and item.endswith("*") for item in allowed))
+
     def test_auth_required_stderr_raises_authentication_required(self):
         process = FakeClaudeProcess(stdout_lines=[], stderr_lines=["Error: Not authenticated. Please run /login."], exit_code=1)
         agent = self._agent_with_popen(process)

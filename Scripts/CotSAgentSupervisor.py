@@ -214,7 +214,17 @@ def build_continue_prompt(name: str, state: dict[str, Any]) -> str:
 CLAUDE_ALLOWED_TOOLS = (
     "Read Edit Write Grep Glob "
     "Bash(python Scripts/CotS-GitCompletion.py *) "
-    "Bash(Scripts\\Build-ToolLab.cmd *)"
+    "Bash(Scripts\\Build-ToolLab.cmd *) "
+    "mcp__cots-host__GetToolLabStatus "
+    "mcp__cots-host__AcquireMutationLock "
+    "mcp__cots-host__ReleaseMutationLock "
+    "mcp__cots-host__TransferMutationLock "
+    "mcp__cots-host__OpenToolLab "
+    "mcp__cots-host__CloseToolLab "
+    "mcp__cots-host__WaitForUnrealMcp "
+    "mcp__cots-host__BuildToolLab "
+    "mcp__cots-host__RunCotSAutomation "
+    "mcp__unreal-mcp__*"
 )
 
 TASK_PATTERN = re.compile(r"^SUPERVISOR_TASK:\s*(.+)$", re.MULTILINE)
