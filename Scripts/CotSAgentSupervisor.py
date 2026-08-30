@@ -20,6 +20,7 @@ import http.client
 import json
 import msvcrt
 import os
+import queue
 import re
 import shutil
 import signal
@@ -61,6 +62,53 @@ MAX_TRANSIENT_RETRIES = 3
 MAX_TRANSPORT_RETRIES = 2
 TRANSIENT_BASE_BACKOFF_SECONDS = 5.0
 TRANSIENT_MAX_BACKOFF_SECONDS = 60.0
+
+# --- Claude turn observability & watchdogs (TASK-008C Claude-hang fix) -----
+# The previous design ran `claude -p ... --output-format json` as one opaque
+# subprocess.run() call bounded only by TURN_TIMEOUT_SECONDS (2h): no
+# streamed output, no distinct "turn started" event, and .cots/claude-
+# protocol.log was only written after the process exited. The live incident
+# this fixes (.cots/claude-protocol.log + .cots/supervisor-events.log,
+# 2026-08-30 02:30-02:39) showed the dashboard sitting on
+# RUNNING_CLAUDE/ACTIVE with no visible progress for minutes even though the
+# underlying `claude` process actually returned in under 130s both times
+# (is_error, subtype=error_during_execution, terminal_reason=
+# aborted_streaming, stop_reason=tool_use, num_turns 13 and 20 -- real
+# productive tool-use work, not a hang; confirmed from the captured
+# `--output-format json` payload). The fix switches to `--output-format
+# stream-json --verbose --include-partial-messages`, read incrementally via
+# Popen -- `--verbose` is not optional: the installed Claude Code 2.1.251 CLI
+# refuses `-p --output-format stream-json` without it ("Error: When using
+# --print, --output-format=stream-json requires --verbose", confirmed live).
+CLAUDE_STARTUP_TIMEOUT_SECONDS = 30
+# Time from process spawn to the first observed stdout/stderr byte. Confirmed
+# live: the CLI's first `system`/`init` line normally arrives in 1-2s: a
+# process that produces nothing at all in 30s never actually started talking
+# to the model and is a startup/transport failure, not slow thinking.
+CLAUDE_NO_ACTIVITY_TIMEOUT_SECONDS = 600
+# Longest gap allowed between any two observed stdout/stderr lines once a
+# turn is under way. Claude Code's stream-json does not emit partial output
+# *during* a single tool call -- the one allowed `Bash(Scripts\Build-
+# ToolLab.cmd *)` invocation runs a whole Unreal build/test cycle
+# synchronously before the CLI emits that tool's result line -- so this has
+# to stay generous enough to cover one real incremental Unreal build+test
+# pass rather than the ~1-2 minute turns actually observed in the incident
+# capture. 10 minutes is comfortably above a normal incremental build while
+# still catching a genuinely stuck/disconnected stream in a fraction of the
+# old 2-hour blind window.
+CLAUDE_TOTAL_TURN_TIMEOUT_SECONDS = 45 * 60
+# Final backstop for one Claude turn, replacing the shared 2-hour
+# TURN_TIMEOUT_SECONDS for Claude specifically -- Codex's own wait_turn() is
+# unrelated and keeps using TURN_TIMEOUT_SECONDS unchanged. 45 minutes
+# comfortably covers a full edit/build/test cycle while remaining a real
+# bound rather than "practically unbounded".
+CLAUDE_HEARTBEAT_SECONDS = 2.0
+# How often run_turn refreshes the dashboard's elapsed-time heartbeat while a
+# turn is in flight (TASK-008C #4).
+CLAUDE_TERMINATE_GRACE_SECONDS = 10.0
+# Bounded wait after process.terminate() before escalating to process.kill()
+# -- see "owned process termination" (TASK-008C #6): only the exact Claude
+# child a given run_turn() call spawned is ever touched.
 
 AUTONOMY_POLICY = {"granular": {
     # App Server's auto-reviewer, rather than a human, evaluates the narrow
@@ -259,6 +307,10 @@ class TurnFailed(RuntimeError):
         self.transient = transient
 
 
+class AuthenticationRequired(RuntimeError):
+    """The provider genuinely requires a human to (re)authenticate -- unlike
+    every other failure shape, no retry, backoff, or rotation can resolve
+    this on its own (TASK-008C #7). Handled as an immediate HUMAN_GATE."""
 
 
 class TurnResult:
@@ -688,8 +740,14 @@ class CodexAgent:
         self.thread_id = thread_id
         return resumed
 
-    def run_turn(self, prompt: str) -> TurnResult:
+    def run_turn(self, prompt: str, bus: "StatusBus | None" = None, shutdown_event: "threading.Event | None" = None) -> TurnResult:
+        # bus/shutdown_event accepted only for interface parity with
+        # ClaudeAgent.run_turn (main() calls both polymorphically); Codex's
+        # own App Server turn/completed visibility and Ctrl+C handling are
+        # unrelated to the TASK-008C Claude-hang fix and are left unchanged.
         assert self.app is not None and self.thread_id is not None
+        if bus is not None:
+            bus.update(event="Codex turn starting")
         self.app.request("turn/start", {"threadId": self.thread_id, "input": user_text(prompt)}, timeout=60)
         turn = self.app.wait_turn(self.thread_id)
         if turn.get("status") == "failed":
@@ -715,31 +773,267 @@ class CodexAgent:
 # Claude adapter: one ``claude -p`` invocation per turn, resumed by session id
 # --------------------------------------------------------------------------
 
-def log_claude_protocol(args: list[str], completed: subprocess.CompletedProcess[str]) -> None:
+def _trace_claude_invocation(args: list[str]) -> None:
     CLAUDE_PROTOCOL_LOG.parent.mkdir(exist_ok=True)
     with CLAUDE_PROTOCOL_LOG.open("a", encoding="utf-8") as log:
-        log.write(json.dumps({
-            "ts": time.time(), "args": args, "returncode": completed.returncode,
-            "stdout": completed.stdout, "stderr": completed.stderr,
-        }, separators=(",", ":")) + "\n")
+        log.write(json.dumps({"ts": time.time(), "stream": "invoke", "args": args}, separators=(",", ":")) + "\n")
 
 
-def try_parse_json(text: str) -> dict[str, Any] | None:
-    text = text.strip()
-    if not text:
-        return None
+def _trace_claude_line(stream: str, line: str) -> None:
+    """Raw provider traffic, one line at a time as it actually arrives --
+    unlike the previous design, this is written incrementally during the
+    turn rather than only after the whole subprocess exits (TASK-008C #2)."""
+    CLAUDE_PROTOCOL_LOG.parent.mkdir(exist_ok=True)
+    with CLAUDE_PROTOCOL_LOG.open("a", encoding="utf-8") as log:
+        log.write(json.dumps({"ts": time.time(), "stream": stream, "line": line.rstrip("\n")}, separators=(",", ":")) + "\n")
+
+
+def try_parse_stream_line(line: str) -> dict[str, Any] | None:
+    """Decode one ``stream-json`` line. A malformed/partial line (truncated
+    write, non-JSON noise) is skipped rather than crashing the turn."""
     try:
-        return json.loads(text)
+        obj = json.loads(line)
     except json.JSONDecodeError:
-        pass
-    # ``-p`` normally prints exactly one JSON object; fall back to the last
-    # line in case anything else leaked onto stdout.
-    for line in reversed(text.splitlines()):
-        try:
-            return json.loads(line)
-        except json.JSONDecodeError:
-            continue
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+CLAUDE_EVENT_ARG_LIMIT = 80
+
+
+def _claude_tool_label(name: str, tool_input: dict[str, Any]) -> str:
+    """Bounded, human-readable one-line label for a tool_use block -- never
+    the tool's full input, which can contain full file contents for
+    Edit/Write or an arbitrarily long Bash command (TASK-008C #4: operational
+    visibility only, never a raw dump)."""
+    if name in ("Read", "Grep", "Glob", "Edit", "Write"):
+        target = tool_input.get("file_path") or tool_input.get("pattern") or tool_input.get("path") or ""
+    elif name == "Bash":
+        target = str(tool_input.get("command", ""))
+    else:
+        target = ""
+    target = " ".join(str(target).split())
+    if len(target) > CLAUDE_EVENT_ARG_LIMIT:
+        target = target[: CLAUDE_EVENT_ARG_LIMIT - 1] + "…"
+    return f"{name}({target})" if target else name
+
+
+def summarize_claude_stream_object(obj: dict[str, Any], tool_names: dict[str, str]) -> str | None:
+    """One bounded, safe dashboard event string for a decoded stream-json
+    line, or ``None`` if it carries no operator-relevant activity of its own
+    (TASK-008C #4). Never surfaces ``thinking`` content or raw stream-json.
+    ``tool_names`` is mutated in place so a later tool_result can be
+    correlated back to the tool call that produced it."""
+    obj_type = obj.get("type")
+    if obj_type == "assistant":
+        for block in (obj.get("message") or {}).get("content") or []:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            name = str(block.get("name", "tool"))
+            tool_use_id = block.get("id")
+            if tool_use_id:
+                tool_names[tool_use_id] = name
+            return f"invoking {_claude_tool_label(name, block.get('input') or {})}"
+        return None
+    if obj_type == "user":
+        for block in (obj.get("message") or {}).get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                name = tool_names.get(block.get("tool_use_id"), "tool")
+                return f"{name} result received"
+        return None
     return None
+
+
+AUTH_REQUIRED_PATTERNS = [
+    re.compile(r"not authenticated", re.IGNORECASE),
+    re.compile(r"please (run|use) [`']?/?login", re.IGNORECASE),
+    re.compile(r"invalid api key", re.IGNORECASE),
+    re.compile(r"authentication required", re.IGNORECASE),
+    re.compile(r"\bunauthoriz", re.IGNORECASE),
+]
+PERMISSION_REQUIRED_PATTERNS = [
+    re.compile(r"permission denied for tool", re.IGNORECASE),
+    re.compile(r"requires (a |an )?(explicit )?permission", re.IGNORECASE),
+    re.compile(r"not (in the )?allow(ed)?list", re.IGNORECASE),
+]
+CLI_CONFIG_ERROR_PATTERNS = [
+    re.compile(r"requires --verbose", re.IGNORECASE),
+    re.compile(r"unknown option", re.IGNORECASE),
+    re.compile(r"unrecognized argument", re.IGNORECASE),
+    re.compile(r"invalid.*permission.mode", re.IGNORECASE),
+    re.compile(r"unsupported permission mode", re.IGNORECASE),
+    re.compile(r"MCP server .* failed to (start|connect)", re.IGNORECASE),
+    re.compile(r"mcp config", re.IGNORECASE),
+]
+
+
+def classify_claude_startup_failure(combined_text: str, returncode: int | None) -> str:
+    """Best-effort classification of a Claude turn that produced no
+    parseable ``result`` line at all (TASK-008C #7). Distinguishes an
+    auth/login block (HUMAN_GATE -- only a human can resolve it) and a
+    permission/CLI-invocation/MCP-config bug (adapter bug -- never blindly
+    retried) from an ordinary transport hiccup (bounded retry, existing
+    behavior). The CONFIG_ERROR pattern is a real, live-confirmed shape: this
+    exact CLI, run with ``--output-format stream-json`` and no ``--verbose``,
+    printed "Error: When using --print, --output-format=stream-json requires
+    --verbose" and exited nonzero with no JSON on stdout at all."""
+    if any(pattern.search(combined_text) for pattern in AUTH_REQUIRED_PATTERNS):
+        return "AUTH_REQUIRED"
+    if any(pattern.search(combined_text) for pattern in PERMISSION_REQUIRED_PATTERNS):
+        return "PERMISSION_REQUIRED"
+    if any(pattern.search(combined_text) for pattern in CLI_CONFIG_ERROR_PATTERNS):
+        return "CONFIG_ERROR"
+    return "TRANSPORT_ERROR"
+
+
+def claude_watchdog_trip(now: float, started_at: float, last_activity_at: float, saw_first_activity: bool) -> str | None:
+    """Pure decision function for the three independent Claude turn
+    watchdogs (TASK-008C #5): STARTUP, NO_ACTIVITY, TOTAL_TURN. Kept free of
+    any subprocess/threading state so it is directly unit-testable with
+    plain floats -- no waiting required."""
+    elapsed = now - started_at
+    if not saw_first_activity:
+        if elapsed > CLAUDE_STARTUP_TIMEOUT_SECONDS:
+            return "STARTUP_TIMEOUT"
+    elif (now - last_activity_at) > CLAUDE_NO_ACTIVITY_TIMEOUT_SECONDS:
+        return "NO_ACTIVITY_TIMEOUT"
+    if elapsed > CLAUDE_TOTAL_TURN_TIMEOUT_SECONDS:
+        return "TOTAL_TURN_TIMEOUT"
+    return None
+
+
+def format_elapsed(seconds: float) -> str:
+    total = max(0, int(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def _terminate_owned_process(process: Any) -> None:
+    """Terminate only the exact process object passed in -- the supervisor
+    never touches any other PID (TASK-008C #6). Escalates to kill() only if
+    the process does not exit within CLAUDE_TERMINATE_GRACE_SECONDS."""
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=CLAUDE_TERMINATE_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    except Exception:
+        pass
+
+
+def _drive_claude_process(
+    process: Any,
+    bus: "StatusBus | None",
+    shutdown_event: "threading.Event | None",
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Read one Claude turn's stdout/stderr incrementally: trace every raw
+    line to .cots/claude-protocol.log, translate tool_use/tool_result activity
+    into bounded dashboard events, refresh an elapsed-time heartbeat, and
+    enforce the three independent watchdogs plus Ctrl+C -- terminating only
+    this exact ``process`` (TASK-008C #2-#6). Returns the decoded ``result``
+    stream-json object (or None if the turn never produced one) and the
+    collected stderr lines.
+    """
+    lines: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
+
+    def pump(stream: Any, tag: str) -> None:
+        for raw_line in stream:
+            lines.put((tag, raw_line))
+        lines.put((tag, None))  # stream-closed sentinel
+
+    readers = [
+        threading.Thread(target=pump, args=(process.stdout, "stdout"), daemon=True),
+        threading.Thread(target=pump, args=(process.stderr, "stderr"), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+
+    started_at = time.monotonic()
+    last_activity_at = started_at
+    saw_first_activity = False
+    turn_started_emitted = False
+    pending_activity = "starting"
+    tool_names: dict[str, str] = {}
+    result_obj: dict[str, Any] | None = None
+    stderr_lines: list[str] = []
+    closed_streams = 0
+    last_heartbeat = 0.0
+
+    while True:
+        if shutdown_event is not None and shutdown_event.is_set():
+            _terminate_owned_process(process)
+            raise Shutdown()
+
+        now = time.monotonic()
+        tripped = claude_watchdog_trip(now, started_at, last_activity_at, saw_first_activity)
+        if tripped:
+            _terminate_owned_process(process)
+            if tripped == "NO_ACTIVITY_TIMEOUT":
+                raise ProviderStalled(
+                    f"claude produced no provider activity for over {CLAUDE_NO_ACTIVITY_TIMEOUT_SECONDS:.0f}s"
+                )
+            if tripped == "STARTUP_TIMEOUT":
+                raise AppServerError(
+                    f"claude_startup_timeout: no output within {CLAUDE_STARTUP_TIMEOUT_SECONDS:.0f}s of spawn"
+                )
+            raise AppServerError(
+                f"claude_turn_timeout: exceeded {CLAUDE_TOTAL_TURN_TIMEOUT_SECONDS:.0f}s total turn bound"
+            )
+
+        if bus is not None and now - last_heartbeat >= CLAUDE_HEARTBEAT_SECONDS:
+            bus.update(current_action=f"Claude turn running — elapsed {format_elapsed(now - started_at)} ({pending_activity})")
+            last_heartbeat = now
+
+        try:
+            tag, raw_line = lines.get(timeout=0.25)
+        except queue.Empty:
+            if closed_streams >= 2 and process.poll() is not None:
+                break
+            continue
+
+        if raw_line is None:
+            closed_streams += 1
+            if closed_streams >= 2 and process.poll() is not None:
+                break
+            continue
+
+        last_activity_at = time.monotonic()
+        saw_first_activity = True
+        _trace_claude_line(tag, raw_line)
+
+        if tag == "stderr":
+            stderr_lines.append(raw_line.rstrip("\n"))
+            continue
+
+        obj = try_parse_stream_line(raw_line)
+        if obj is None:
+            continue
+
+        if not turn_started_emitted:
+            turn_started_emitted = True
+            if bus is not None:
+                bus.update(event="Claude turn started")
+
+        if obj.get("type") == "result":
+            result_obj = obj
+            continue
+
+        summary = summarize_claude_stream_object(obj, tool_names)
+        if summary:
+            pending_activity = summary
+            if bus is not None:
+                bus.update(event=f"Claude: {summary}")
+
+    for reader in readers:
+        reader.join(timeout=1)
+    return result_obj, stderr_lines
 
 
 def detect_usage_limit(combined_text: str, payload: dict[str, Any] | None) -> tuple[bool, float | None]:
@@ -789,39 +1083,50 @@ class ClaudeAgent:
     # unknown application failure worth a terminal FAILED state.
     TRANSIENT_SUBTYPES = {"error_during_execution", "error_network", "error_timeout"}
 
-    def run_turn(self, prompt: str) -> TurnResult:
+    def run_turn(self, prompt: str, bus: "StatusBus | None" = None, shutdown_event: "threading.Event | None" = None) -> TurnResult:
         args = [
             "claude", "-p", prompt,
-            "--output-format", "json",
+            "--output-format", "stream-json",
+            "--verbose",
+            "--include-partial-messages",
             "--permission-mode", "bypassPermissions",
             "--allowedTools", CLAUDE_ALLOWED_TOOLS,
         ]
         if self.session_id:
             args += ["--resume", self.session_id]
+        _trace_claude_invocation(args)
+        if bus is not None:
+            bus.update(event="Claude turn starting")
         started = time.monotonic()
         try:
-            completed = subprocess.run(
-                args, cwd=REPO, capture_output=True, text=True,
-                timeout=TURN_TIMEOUT_SECONDS, encoding="utf-8", errors="replace",
+            process = subprocess.Popen(
+                args, cwd=REPO, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace", bufsize=1,
             )
-        except subprocess.TimeoutExpired as error:
-            raise AppServerError(f"claude_turn_timeout: {error}") from error
+        except OSError as error:
+            raise AppServerError(f"claude_spawn_failed: {error}") from error
+        result_obj, stderr_lines = _drive_claude_process(process, bus, shutdown_event)
+        returncode = process.poll()
         duration_ms = (time.monotonic() - started) * 1000
-        log_claude_protocol(args, completed)
-        payload = try_parse_json(completed.stdout)
-        combined = f"{completed.stdout}\n{completed.stderr}"
-        is_limited, reset_at = detect_usage_limit(combined, payload)
+        combined = "\n".join(stderr_lines)
+        is_limited, reset_at = detect_usage_limit(combined, result_obj)
         if is_limited:
             raise UsageResetRequired("claude_usage_limit", reset_at)
-        if payload is None:
-            raise AppServerError(f"claude_no_json_result exit={completed.returncode}: {combined[-2000:]}")
-        self.session_id = payload.get("session_id") or self.session_id
-        if payload.get("is_error"):
-            subtype = payload.get("subtype")
+        if result_obj is None:
+            classification = classify_claude_startup_failure(combined, returncode)
+            if classification == "AUTH_REQUIRED":
+                raise AuthenticationRequired(f"claude_auth_required: {combined[-2000:]}")
+            if classification in ("PERMISSION_REQUIRED", "CONFIG_ERROR"):
+                raise TurnFailed(f"claude_{classification.lower()} exit={returncode}: {combined[-2000:]}", transient=False)
+            raise AppServerError(f"claude_no_json_result exit={returncode}: {combined[-2000:]}")
+        self.session_id = result_obj.get("session_id") or self.session_id
+        if result_obj.get("is_error"):
+            subtype = result_obj.get("subtype")
             transient = subtype in self.TRANSIENT_SUBTYPES
-            raise TurnFailed(f"claude_error subtype={subtype}: {str(payload.get('result', ''))[:2000]}", transient=transient)
-        activity_count = int(payload.get("num_turns") or 0)
-        return TurnResult(str(payload.get("result", "")), duration_ms, activity_count)
+            raise TurnFailed(f"claude_error subtype={subtype}: {str(result_obj.get('result', ''))[:2000]}", transient=transient)
+        activity_count = int(result_obj.get("num_turns") or 0)
+        return TurnResult(str(result_obj.get("result", "")), duration_ms, activity_count)
 
     def deactivate(self) -> None:
         pass  # nothing to close: each turn is already a completed subprocess
@@ -829,6 +1134,10 @@ class ClaudeAgent:
 
 AGENT_CLASSES = {"codex": CodexAgent, "claude": ClaudeAgent}
 START_PROMPTS = {"codex": CODEX_START, "claude": CLAUDE_START}
+# Claude's activate() is a genuine no-op (it only records a session id to
+# resume); "Claude ready" previously implied real activation work happened.
+# "Claude adapter initialized" says exactly what did (TASK-008C #3).
+ADAPTER_READY_EVENTS = {"codex": "Codex ready", "claude": "Claude adapter initialized"}
 
 
 # --------------------------------------------------------------------------
@@ -1228,7 +1537,7 @@ def main() -> int:
                     **{active_name: {**bus.data.get(active_name, {}), "status": "ACTIVE", "reset_at": None, "last_error": None}},
                 )
                 resumed = agent.activate(session_ref)
-                bus.update(event=f"{active_name.capitalize()} ready")
+                bus.update(event=ADAPTER_READY_EVENTS.get(active_name, f"{active_name.capitalize()} ready"))
 
                 prompt = args.prompt or (
                     build_continue_prompt(active_name, bus.data) if resumed and state.get("turn_count") else START_PROMPTS[active_name]
@@ -1247,9 +1556,18 @@ def main() -> int:
                         if simulate_after.get(active_name) and turns_run[active_name] == simulate_after[active_name] + 1:
                             raise UsageResetRequired(f"simulated_{active_name}_usage_limit", time.time() + 60)
                         try:
-                            result = agent.run_turn(prompt)
+                            result = agent.run_turn(prompt, bus=bus, shutdown_event=shutdown_event)
                         except UsageResetRequired:
                             raise
+                        except AuthenticationRequired as auth_error:
+                            # Only a human can (re)authenticate the provider;
+                            # never blindly retried/rotated (TASK-008C #7).
+                            bus.update(
+                                state="HUMAN_GATE", human_gate=str(auth_error),
+                                current_action="Waiting for human",
+                                event=f"HUMAN_GATE: {auth_error}",
+                            )
+                            return 0
                         except (TurnFailed, AppServerError) as failure:
                             if resume_retry_available:
                                 # Claude has no separate resume-validation step; a stale

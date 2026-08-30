@@ -50,6 +50,81 @@ def load_json_fixture(name: str) -> dict:
     return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
 
 
+def load_stream_fixture_lines(name: str) -> list[str]:
+    """Load a plain (unprefixed) stream-json capture: one JSON object per
+    line, as `claude -p --output-format stream-json` actually emits it."""
+    return [line for line in (FIXTURES_DIR / name).read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Test doubles for the streamed Claude turn driver (TASK-008C Claude-hang
+# fix): FakeClaudeProcess stands in for subprocess.Popen so
+# _drive_claude_process / ClaudeAgent.run_turn can be driven deterministically
+# without spawning a real `claude` process, exactly the way FakeCodexAppServer
+# stands in for AppServer above.
+# ---------------------------------------------------------------------------
+
+class _StreamThenHang:
+    """Yields the given lines, then blocks forever -- simulates a process
+    that produced some real output and then genuinely stalled."""
+
+    def __init__(self, lines):
+        self._lines = list(lines)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._lines:
+            return self._lines.pop(0)
+        time.sleep(3600)
+
+
+class FakeClaudeProcess:
+    """Minimal subprocess.Popen stand-in: pre-scripted stdout/stderr, no real
+    OS process. terminate()/kill() are recorded, never touch anything real."""
+
+    def __init__(self, stdout_lines=(), stderr_lines=(), exit_code=0, hang=False):
+        self.stdout = _StreamThenHang(stdout_lines) if hang else iter(list(stdout_lines))
+        self.stderr = _StreamThenHang(stderr_lines) if hang else iter(list(stderr_lines))
+        self._exit_code = exit_code
+        self._hanging = hang
+        self.terminated = False
+        self.killed = False
+
+    def poll(self):
+        return None if self._hanging else self._exit_code
+
+    def terminate(self):
+        self.terminated = True
+        self._hanging = False
+
+    def kill(self):
+        self.killed = True
+        self._hanging = False
+
+    def wait(self, timeout=None):
+        return self._exit_code
+
+
+class RecordingBus:
+    """Records every event/current_action passed to .update(), matching only
+    the subset of StatusBus's interface _drive_claude_process actually uses
+    -- no real file I/O, so these tests never touch .cots/*."""
+
+    def __init__(self):
+        self.events: list[str] = []
+        self.current_actions: list[str] = []
+        self.data: dict = {}
+
+    def update(self, event=None, **fields):
+        self.data.update(fields)
+        if event:
+            self.events.append(event)
+        if "current_action" in fields:
+            self.current_actions.append(fields["current_action"])
+
+
 def make_bare_app_server() -> "sup.AppServer":
     """An AppServer instance with none of the subprocess/thread machinery
     from __init__, for feeding real captured messages through _handle_message
@@ -221,11 +296,13 @@ class TestClaudeUsageLimitDetection(unittest.TestCase):
         self.assertGreater(reset_at, time.time())
 
     def test_claude_error_payload_that_is_not_usage_limit_raises_turn_failed(self):
-        payload = {"is_error": True, "subtype": "error_max_turns", "api_error_status": None, "result": "gave up"}
-        completed = mock.Mock(returncode=1, stdout=json.dumps(payload), stderr="")
+        payload = {
+            "type": "result", "is_error": True, "subtype": "error_max_turns",
+            "api_error_status": None, "result": "gave up", "session_id": "s3", "num_turns": 40,
+        }
+        process = FakeClaudeProcess(stdout_lines=['{"type":"system","subtype":"init"}', json.dumps(payload)], stderr_lines=[])
         agent = sup.ClaudeAgent()
-        with mock.patch.object(sup.subprocess, "run", return_value=completed), \
-             mock.patch.object(sup, "log_claude_protocol", lambda *a: None):
+        with mock.patch.object(sup.subprocess, "Popen", return_value=process):
             with self.assertRaises(sup.TurnFailed) as ctx:
                 agent.run_turn("continue")
         self.assertFalse(ctx.exception.transient)
@@ -420,6 +497,300 @@ class TestSupervisorLease(unittest.TestCase):
             finally:
                 first.close()
                 sup.LEASE.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 12. Claude turn streaming/watchdogs (TASK-008C Claude-hang fix). Replaces
+#     the opaque `subprocess.run(..., timeout=TURN_TIMEOUT_SECONDS)` design
+#     that produced no visibility while a turn ran; see
+#     Scripts/tests/fixtures/claude_stream_success.jsonl (a trimmed real
+#     capture of the installed Claude Code 2.1.251 CLI's `--output-format
+#     stream-json --verbose` shape) and CLAUDE_*_TIMEOUT_SECONDS' docstrings
+#     for the live incident this repairs.
+# ---------------------------------------------------------------------------
+
+class TestClaudeStreamParsing(unittest.TestCase):
+    def test_malformed_line_is_skipped_not_raised(self):
+        self.assertIsNone(sup.try_parse_stream_line("not json {{{"))
+
+    def test_valid_line_parses(self):
+        obj = sup.try_parse_stream_line('{"type":"result","is_error":false}')
+        self.assertEqual(obj["type"], "result")
+
+    def test_tool_use_summary_is_bounded_and_correlates_tool_name(self):
+        tool_names: dict[str, str] = {}
+        obj = {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "toolu_1", "name": "Read", "input": {"file_path": "AGENTS.md"}},
+        ]}}
+        summary = sup.summarize_claude_stream_object(obj, tool_names)
+        self.assertEqual(summary, "invoking Read(AGENTS.md)")
+        self.assertEqual(tool_names["toolu_1"], "Read")
+
+    def test_tool_result_summary_uses_correlated_tool_name(self):
+        tool_names = {"toolu_1": "Bash"}
+        obj = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "..."}]}}
+        summary = sup.summarize_claude_stream_object(obj, tool_names)
+        self.assertEqual(summary, "Bash result received")
+
+    def test_thinking_block_is_never_surfaced(self):
+        obj = {"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": "secret reasoning"}]}}
+        self.assertIsNone(sup.summarize_claude_stream_object(obj, {}))
+
+    def test_stream_event_partial_chunk_is_not_surfaced(self):
+        # --include-partial-messages token-delta events: real activity (must
+        # reset the no-activity watchdog upstream) but never a dashboard event.
+        obj = {"type": "stream_event", "event": {"type": "content_block_delta"}}
+        self.assertIsNone(sup.summarize_claude_stream_object(obj, {}))
+
+    def test_bash_command_is_truncated_to_bounded_length(self):
+        long_command = "python Scripts/CotS-GitCompletion.py " + ("x" * 200)
+        obj = {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "toolu_2", "name": "Bash", "input": {"command": long_command}},
+        ]}}
+        summary = sup.summarize_claude_stream_object(obj, {})
+        self.assertLess(len(summary), len(long_command))
+        self.assertTrue(summary.endswith(")"))
+
+
+class TestClaudeWatchdogs(unittest.TestCase):
+    def test_no_trip_early_within_startup_window(self):
+        self.assertIsNone(sup.claude_watchdog_trip(now=10, started_at=0, last_activity_at=0, saw_first_activity=False))
+
+    def test_startup_timeout_trips_when_never_active(self):
+        result = sup.claude_watchdog_trip(now=sup.CLAUDE_STARTUP_TIMEOUT_SECONDS + 1, started_at=0, last_activity_at=0, saw_first_activity=False)
+        self.assertEqual(result, "STARTUP_TIMEOUT")
+
+    def test_no_activity_timeout_trips_after_a_long_silent_gap(self):
+        now = 10_000.0
+        last_activity = now - sup.CLAUDE_NO_ACTIVITY_TIMEOUT_SECONDS - 1
+        result = sup.claude_watchdog_trip(now=now, started_at=0, last_activity_at=last_activity, saw_first_activity=True)
+        self.assertEqual(result, "NO_ACTIVITY_TIMEOUT")
+
+    def test_recent_activity_does_not_trip_no_activity_timeout(self):
+        result = sup.claude_watchdog_trip(now=100, started_at=0, last_activity_at=99, saw_first_activity=True)
+        self.assertIsNone(result)
+
+    def test_total_turn_timeout_trips_even_with_recent_activity(self):
+        now = sup.CLAUDE_TOTAL_TURN_TIMEOUT_SECONDS + 1
+        result = sup.claude_watchdog_trip(now=now, started_at=0, last_activity_at=now - 1, saw_first_activity=True)
+        self.assertEqual(result, "TOTAL_TURN_TIMEOUT")
+
+    def test_format_elapsed_hours_minutes_seconds(self):
+        self.assertEqual(sup.format_elapsed(3 * 3600 + 12 * 60 + 5), "03:12:05")
+
+    def test_format_elapsed_clamps_negative_to_zero(self):
+        self.assertEqual(sup.format_elapsed(-5), "00:00:00")
+
+
+class TestClaudeFailureClassification(unittest.TestCase):
+    def test_auth_required_is_classified(self):
+        self.assertEqual(sup.classify_claude_startup_failure("Error: Not authenticated. Please run /login.", 1), "AUTH_REQUIRED")
+
+    def test_permission_required_is_classified(self):
+        self.assertEqual(sup.classify_claude_startup_failure("Permission denied for tool Bash", 1), "PERMISSION_REQUIRED")
+
+    def test_invalid_cli_args_is_config_error(self):
+        # Real, live-confirmed shape (installed Claude Code 2.1.251, TASK-008C
+        # repair): `claude -p ... --output-format stream-json` without
+        # --verbose refuses to run with exactly this message.
+        text = "Error: When using --print, --output-format=stream-json requires --verbose"
+        self.assertEqual(sup.classify_claude_startup_failure(text, 1), "CONFIG_ERROR")
+
+    def test_unsupported_permission_mode_is_config_error(self):
+        self.assertEqual(sup.classify_claude_startup_failure("Error: unsupported permission mode 'weird'", 1), "CONFIG_ERROR")
+
+    def test_unrecognized_stderr_is_transport_error_not_silently_ignored(self):
+        self.assertEqual(sup.classify_claude_startup_failure("connection reset by peer", 1), "TRANSPORT_ERROR")
+
+
+class TestDriveClaudeProcess(unittest.TestCase):
+    def test_successful_streamed_turn_produces_result_and_bounded_events(self):
+        lines = load_stream_fixture_lines("claude_stream_success.jsonl")
+        process = FakeClaudeProcess(stdout_lines=lines, stderr_lines=[])
+        bus = RecordingBus()
+        result_obj, _stderr = sup._drive_claude_process(process, bus, None)
+        self.assertIsNotNone(result_obj)
+        self.assertEqual(result_obj["type"], "result")
+        self.assertFalse(result_obj["is_error"])
+        self.assertIn("Claude turn started", bus.events)
+        self.assertTrue(any("invoking Read" in e for e in bus.events))
+        self.assertTrue(any("Read result received" in e for e in bus.events))
+        # Never leak thinking content or raw partial-stream deltas.
+        self.assertFalse(any("thinking" in e.lower() for e in bus.events))
+        self.assertFalse(any("content_block_delta" in e for e in bus.events))
+
+    def test_malformed_line_among_valid_lines_does_not_crash(self):
+        lines = [
+            '{"type":"system","subtype":"init"}',
+            "not json at all {{{",
+            '{"type":"result","is_error":false,"subtype":"success","result":"ok","session_id":"s1","num_turns":1}',
+        ]
+        process = FakeClaudeProcess(stdout_lines=lines, stderr_lines=[])
+        result_obj, _stderr = sup._drive_claude_process(process, None, None)
+        self.assertEqual(result_obj["result"], "ok")
+
+    def test_no_false_turn_started_before_any_line_arrives(self):
+        process = FakeClaudeProcess(stdout_lines=[], stderr_lines=[], hang=True)
+        bus = RecordingBus()
+        with mock.patch.object(sup, "CLAUDE_STARTUP_TIMEOUT_SECONDS", 0.05):
+            with self.assertRaises(sup.AppServerError):
+                sup._drive_claude_process(process, bus, None)
+        self.assertNotIn("Claude turn started", bus.events)
+        self.assertTrue(process.terminated or process.killed)
+
+    def test_no_activity_timeout_terminates_owned_process_and_raises_stalled(self):
+        process = FakeClaudeProcess(stdout_lines=['{"type":"system","subtype":"init"}'], stderr_lines=[], hang=True)
+        with mock.patch.object(sup, "CLAUDE_STARTUP_TIMEOUT_SECONDS", 30), \
+             mock.patch.object(sup, "CLAUDE_NO_ACTIVITY_TIMEOUT_SECONDS", 0.05), \
+             mock.patch.object(sup, "CLAUDE_TOTAL_TURN_TIMEOUT_SECONDS", 5.0):
+            with self.assertRaises(sup.ProviderStalled):
+                sup._drive_claude_process(process, None, None)
+        self.assertTrue(process.terminated or process.killed)
+
+    def test_stderr_activity_prevents_startup_timeout(self):
+        # If stderr did not count as activity this would raise
+        # STARTUP_TIMEOUT (AppServerError) instead of NO_ACTIVITY_TIMEOUT
+        # (ProviderStalled) -- proving stderr resets the same clock as stdout.
+        process = FakeClaudeProcess(stdout_lines=[], stderr_lines=["some diagnostic line"], hang=True)
+        with mock.patch.object(sup, "CLAUDE_STARTUP_TIMEOUT_SECONDS", 30), \
+             mock.patch.object(sup, "CLAUDE_NO_ACTIVITY_TIMEOUT_SECONDS", 0.05), \
+             mock.patch.object(sup, "CLAUDE_TOTAL_TURN_TIMEOUT_SECONDS", 5.0):
+            with self.assertRaises(sup.ProviderStalled):
+                sup._drive_claude_process(process, None, None)
+
+    def test_total_turn_timeout_fires_even_with_recent_activity(self):
+        process = FakeClaudeProcess(stdout_lines=['{"type":"system","subtype":"init"}'], stderr_lines=[], hang=True)
+        with mock.patch.object(sup, "CLAUDE_STARTUP_TIMEOUT_SECONDS", 30), \
+             mock.patch.object(sup, "CLAUDE_NO_ACTIVITY_TIMEOUT_SECONDS", 100), \
+             mock.patch.object(sup, "CLAUDE_TOTAL_TURN_TIMEOUT_SECONDS", 0.05):
+            with self.assertRaises(sup.AppServerError) as ctx:
+                sup._drive_claude_process(process, None, None)
+        self.assertIn("claude_turn_timeout", str(ctx.exception))
+        self.assertTrue(process.terminated or process.killed)
+
+    def test_ctrl_c_mid_turn_terminates_owned_process_and_raises_shutdown(self):
+        process = FakeClaudeProcess(stdout_lines=[], stderr_lines=[], hang=True)
+        shutdown_event = threading.Event()
+        shutdown_event.set()
+        with self.assertRaises(sup.Shutdown):
+            sup._drive_claude_process(process, None, shutdown_event)
+        self.assertTrue(process.terminated or process.killed)
+
+    def test_dashboard_heartbeat_shows_elapsed_time_format(self):
+        process = FakeClaudeProcess(stdout_lines=['{"type":"system","subtype":"init"}'], stderr_lines=[], hang=True)
+        bus = RecordingBus()
+        with mock.patch.object(sup, "CLAUDE_HEARTBEAT_SECONDS", 0.01), \
+             mock.patch.object(sup, "CLAUDE_STARTUP_TIMEOUT_SECONDS", 30), \
+             mock.patch.object(sup, "CLAUDE_NO_ACTIVITY_TIMEOUT_SECONDS", 0.3), \
+             mock.patch.object(sup, "CLAUDE_TOTAL_TURN_TIMEOUT_SECONDS", 5.0):
+            with self.assertRaises(sup.ProviderStalled):
+                sup._drive_claude_process(process, bus, None)
+        self.assertTrue(any("elapsed " in action for action in bus.current_actions))
+
+
+class TestOwnedProcessTermination(unittest.TestCase):
+    def test_only_the_exact_passed_process_is_touched(self):
+        target = FakeClaudeProcess(stdout_lines=[], stderr_lines=[], hang=True)
+        other = FakeClaudeProcess(stdout_lines=[], stderr_lines=[], hang=True)
+        sup._terminate_owned_process(target)
+        self.assertTrue(target.terminated)
+        self.assertFalse(other.terminated)
+        self.assertFalse(other.killed)
+
+    def test_already_exited_process_is_left_alone(self):
+        process = FakeClaudeProcess(stdout_lines=[], stderr_lines=[], hang=False, exit_code=0)
+        sup._terminate_owned_process(process)
+        self.assertFalse(process.terminated)
+        self.assertFalse(process.killed)
+
+    def test_escalates_to_kill_if_terminate_does_not_exit_in_time(self):
+        class StubbornProcess(FakeClaudeProcess):
+            def terminate(self):
+                self.terminated = True  # ignores "SIGTERM": stays "alive"
+
+            def wait(self, timeout=None):
+                if not self.killed:
+                    raise sup.subprocess.TimeoutExpired(cmd="claude", timeout=timeout or 0)
+                return self._exit_code
+
+        process = StubbornProcess(stdout_lines=[], stderr_lines=[], hang=True)
+        sup._terminate_owned_process(process)
+        self.assertTrue(process.terminated)
+        self.assertTrue(process.killed)
+
+
+class TestClaudeAgentRunTurn(unittest.TestCase):
+    def _agent_with_popen(self, process: FakeClaudeProcess) -> "sup.ClaudeAgent":
+        agent = sup.ClaudeAgent()
+        patcher = mock.patch.object(sup.subprocess, "Popen", return_value=process)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return agent
+
+    def test_successful_turn_captures_session_id(self):
+        lines = load_stream_fixture_lines("claude_stream_success.jsonl")
+        agent = self._agent_with_popen(FakeClaudeProcess(stdout_lines=lines, stderr_lines=[]))
+        result = agent.run_turn("continue")
+        self.assertEqual(agent.session_id, "097a57a1-c9b9-4bae-971c-059635554f77")
+        self.assertFalse(result.is_suspicious())
+
+    def test_second_turn_resumes_captured_session_id(self):
+        lines = load_stream_fixture_lines("claude_stream_success.jsonl")
+        captured_args: list[list[str]] = []
+
+        def fake_popen(args, **kwargs):
+            captured_args.append(args)
+            return FakeClaudeProcess(stdout_lines=lines, stderr_lines=[])
+
+        with mock.patch.object(sup.subprocess, "Popen", side_effect=fake_popen):
+            agent = sup.ClaudeAgent()
+            agent.run_turn("first")
+            agent.run_turn("second")
+        self.assertNotIn("--resume", captured_args[0])
+        self.assertIn("--resume", captured_args[1])
+        resume_index = captured_args[1].index("--resume")
+        self.assertEqual(captured_args[1][resume_index + 1], "097a57a1-c9b9-4bae-971c-059635554f77")
+
+    def test_auth_required_stderr_raises_authentication_required(self):
+        process = FakeClaudeProcess(stdout_lines=[], stderr_lines=["Error: Not authenticated. Please run /login."], exit_code=1)
+        agent = self._agent_with_popen(process)
+        with self.assertRaises(sup.AuthenticationRequired):
+            agent.run_turn("continue")
+
+    def test_invalid_cli_args_raises_non_transient_turn_failed(self):
+        process = FakeClaudeProcess(
+            stdout_lines=[],
+            stderr_lines=["Error: When using --print, --output-format=stream-json requires --verbose"],
+            exit_code=1,
+        )
+        agent = self._agent_with_popen(process)
+        with self.assertRaises(sup.TurnFailed) as ctx:
+            agent.run_turn("continue")
+        self.assertFalse(ctx.exception.transient)
+
+    def test_usage_limit_detected_from_streamed_result_payload(self):
+        payload = load_json_fixture("claude_usage_limit.json")
+        line = json.dumps({**payload, "type": "result"})
+        process = FakeClaudeProcess(stdout_lines=['{"type":"system","subtype":"init"}', line], stderr_lines=[])
+        agent = self._agent_with_popen(process)
+        with self.assertRaises(sup.UsageResetRequired):
+            agent.run_turn("continue")
+
+    def test_error_during_execution_is_transient_and_retryable(self):
+        # The exact shape of the live TASK-008C incident (.cots/claude-
+        # protocol.log, 2026-08-30 02:30-02:39): a real, substantial turn
+        # (num_turns=13/20) that ended with is_error/subtype=
+        # error_during_execution. Must stay transient=True (bounded retry),
+        # not become a terminal FAILED.
+        payload = {
+            "type": "result", "is_error": True, "subtype": "error_during_execution",
+            "api_error_status": None, "result": "aborted", "session_id": "s2", "num_turns": 13,
+        }
+        process = FakeClaudeProcess(stdout_lines=['{"type":"system","subtype":"init"}', json.dumps(payload)], stderr_lines=[])
+        agent = self._agent_with_popen(process)
+        with self.assertRaises(sup.TurnFailed) as ctx:
+            agent.run_turn("continue")
+        self.assertTrue(ctx.exception.transient)
 
 
 # ---------------------------------------------------------------------------
