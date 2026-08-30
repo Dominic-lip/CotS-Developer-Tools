@@ -15,7 +15,7 @@
     {"id":"TASK-008B","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-008B_PERSISTENT_SUPERVISOR_PROOF.md: live checkpoint-continuation and crash-recovery proof from real 2026-08-30 supervisor/factory-controller logs"]},
     {"id":"TASK-008C","status":"COMPLETE_VERIFIED","evidence":["ba71b42 and follow-ups: Scripts/tests/test_cots_agent_supervisor.py fixtures"]},
     {"id":"TASK-009","status":"COMPLETE_VERIFIED","evidence":["51fdfef: Docs/VALIDATION_DIAGNOSTICS.md"]},
-    {"id":"TASK-010","status":"COMPLETE_BUT_EVIDENCE_MISSING"},
+    {"id":"TASK-010","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-010_AUTOMATED_TESTING.md: deterministic launch/observe/terminate/pass-fail proof reused from the TASK-008A RunCotSAutomation run"]},
     {"id":"TASK-011","status":"COMPLETE_BUT_EVIDENCE_MISSING"},
     {"id":"TASK-012","status":"PARTIAL"},
     {"id":"TASK-013","status":"NOT_STARTED"},
