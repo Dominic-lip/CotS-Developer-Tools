@@ -247,6 +247,27 @@ Canonical `Build-ToolLab.cmd` succeeded (`Result: Succeeded`, exit 0). Fixed
 Host `RunCotSAutomation` operation `5be10975-c657-4c92-b65d-44c8b92f0b2e`
 returned exit 0 and released the Host lock under `supervisor-task-013`.
 
+## Ninth increment: guarded AnimBlueprint asset authoring
+
+`UCotSMutationToolset::CreateDisposableAnimBlueprint` now creates only an
+exact-path `UAnimBlueprint` under `/Game/CotSMutationLive/`. It uses UE 5.8's
+public `UAnimBlueprintFactory`, explicitly supplies `UAnimInstance` as the
+parent class, and requires both an exact `USkeleton` and an exact-skeleton
+preview mesh (or a native Skeleton preview-mesh resolution). Its structured
+result reports the skeleton, preview mesh, parent class, and that graph
+topology is `none_created`; state-machine creation, connections, compilation,
+and saving remain explicit later operations.
+
+The current imported Mannequin Skeleton still resolves the missing
+`SKM_Quinn_Simple` preview asset. The focused automation test therefore proves
+the new factory's dry-run safely refuses before package creation, matching the
+existing Blend Space prerequisite rather than fabricating a preview mesh.
+
+Canonical `Build-ToolLab.cmd` succeeded (`Result: Succeeded`, exit 0). Fixed
+Host `RunCotSAutomation` operation `16189380-1899-4b14-a7cb-501de9f5bdae`
+returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
+CODE: 0`. The Host lock was released under `supervisor-task-013`.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
@@ -255,8 +276,8 @@ returned exit 0 and released the Host lock under `supervisor-task-013`.
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof; provide a valid
   exact-skeleton preview mesh and create/inspect/clean up the guarded Blend
-  Space; implement AnimBP/state-machine create/configure (state-machine
-  inspection is now available); apply the
+  Space; configure a created AnimBP with a state machine and transitions,
+  compile and inspect it; apply the
   root-motion/IK policy to the complete locomotion set and run its test,
   AnimBP/state-machine create/configure, root-motion/IK policy checks,
   locomotion validation and test running. (Skeleton compatibility inspection

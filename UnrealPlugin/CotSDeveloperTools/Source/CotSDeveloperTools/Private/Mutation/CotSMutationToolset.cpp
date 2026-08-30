@@ -2,6 +2,8 @@
 
 #include "AssetToolsModule.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Animation/AnimBlueprint.h"
+#include "Animation/AnimInstance.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/BlendSpace.h"
 #include "Components/SceneComponent.h"
@@ -18,6 +20,7 @@
 #include "EngineUtils.h"
 #include "Factories/CurveFactory.h"
 #include "Factories/BlendSpaceFactoryNew.h"
+#include "Factories/AnimBlueprintFactory.h"
 #include "GameFramework/Actor.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Misc/PackageName.h"
@@ -296,6 +299,47 @@ FString UCotSMutationToolset::CreateDisposableLocomotionBlendSpace(const FString
     BlendSpace->MarkPackageDirty();
     Result.Validation.Add(TEXT("re-inspect Blend Space axes and sample count before save"));
     return Finish(Result, true, false, TEXT("Blend Space creation is package-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::CreateDisposableAnimBlueprint(const FString& ObjectPath, const FString& SkeletonPath, const FString& PreviewMeshPath, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.CreateDisposableAnimBlueprint");
+    if (!IsDisposableAssetPath(ObjectPath)) { return FCotSOperationResult::Fail(Op, TEXT("outside_disposable_scope"), TEXT("AnimBlueprint creation is restricted to /Game/CotSMutationLive/ exact object paths."), bDryRun).ToJson(); }
+    USkeleton* Skeleton = Cast<USkeleton>(LoadExactAsset(SkeletonPath));
+    USkeletalMesh* PreviewMesh = PreviewMeshPath.IsEmpty() ? (Skeleton ? Skeleton->GetPreviewMesh(true) : nullptr) : Cast<USkeletalMesh>(LoadExactAsset(PreviewMeshPath));
+    if (!Skeleton || !PreviewMesh || PreviewMesh->GetSkeleton() != Skeleton)
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("invalid_skeleton_or_preview_mesh"), TEXT("SkeletonPath must resolve; PreviewMeshPath must resolve, or its empty value must let UE resolve the Skeleton's preview mesh; the mesh must use that exact skeleton."), bDryRun).ToJson();
+    }
+    FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath, SkeletonPath);
+    Result.AddAffectedObject(PreviewMesh->GetPathName());
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("object_path"), ObjectPath);
+    Result.Data->SetStringField(TEXT("skeleton"), SkeletonPath);
+    Result.Data->SetStringField(TEXT("preview_mesh"), PreviewMesh->GetPathName());
+    Result.Data->SetStringField(TEXT("parent_class"), UAnimInstance::StaticClass()->GetPathName());
+    Result.Data->SetStringField(TEXT("graph_topology"), TEXT("none_created"));
+    if (UObject* Existing = LoadExactAsset(ObjectPath))
+    {
+        if (!Existing->IsA<UAnimBlueprint>()) { return FCotSOperationResult::Fail(Op, TEXT("destination_collision"), TEXT("The exact path is occupied by a different asset class."), bDryRun).ToJson(); }
+        Result.Validation.Add(TEXT("already_exists_with_requested_class"));
+        return Finish(Result, false, false, TEXT("AnimBlueprint asset creation is package-backed and graph topology is not created by this operation."));
+    }
+    if (bDryRun)
+    {
+        Result.Validation.Add(TEXT("validated_disposable_animblueprint_creation_target"));
+        return Finish(Result, true, false, TEXT("AnimBlueprint asset creation is package-backed and graph topology is not created by this operation."));
+    }
+    const FString ObjectName = FPackageName::ObjectPathToObjectName(ObjectPath);
+    const FString PackagePath = FPackageName::ObjectPathToPackageName(ObjectPath).LeftChop(ObjectName.Len() + 1);
+    UAnimBlueprintFactory* Factory = NewObject<UAnimBlueprintFactory>();
+    Factory->ParentClass = UAnimInstance::StaticClass();
+    Factory->TargetSkeleton = Skeleton;
+    Factory->PreviewSkeletalMesh = PreviewMesh;
+    UAnimBlueprint* Blueprint = Cast<UAnimBlueprint>(FAssetToolsModule::GetModule().Get().CreateAsset(ObjectName, PackagePath, UAnimBlueprint::StaticClass(), Factory));
+    if (!Blueprint || !Blueprint->GetPathName().Equals(ObjectPath, ESearchCase::CaseSensitive)) { return FCotSOperationResult::Fail(Op, TEXT("create_failed"), TEXT("UE could not create the requested AnimBlueprint.")).ToJson(); }
+    Result.Validation.Add(TEXT("inspect with CotS.Inspection.GetAnimBlueprintStateMachines before graph authoring"));
+    return Finish(Result, true, false, TEXT("AnimBlueprint asset creation is package-backed and graph topology is not created by this operation."));
 }
 
 FString UCotSMutationToolset::AddLocomotionBlendSpaceSample(const FString& BlendSpacePath, const FString& AnimationPath, double Speed, double Direction, bool bDryRun)
