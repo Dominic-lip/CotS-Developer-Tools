@@ -69,10 +69,24 @@ class TestRecoveryPolicy(unittest.TestCase):
 
 class TestOwnedProcesses(unittest.TestCase):
     def test_stop_owned_touches_only_given_process(self):
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory.subprocess, "run"):
             controller = factory.FactoryController(); target, other = FakeProcess(), FakeProcess(pid=456)
             controller.stop_owned(target, "supervisor")
             self.assertTrue(target.terminated); self.assertFalse(other.terminated)
+
+    def test_stop_owned_sweeps_process_tree_on_windows(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory.sys, "platform", "win32"), mock.patch.object(factory.subprocess, "run") as run:
+            controller = factory.FactoryController(); target = FakeProcess(pid=789)
+            controller.stop_owned(target, "supervisor")
+            run.assert_called_once()
+            args = run.call_args.args[0]
+            self.assertEqual(args[0], "taskkill"); self.assertIn("789", args); self.assertIn("/T", args); self.assertIn("/F", args)
+
+    def test_stop_owned_skips_taskkill_off_windows(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory.sys, "platform", "linux"), mock.patch.object(factory.subprocess, "run") as run:
+            controller = factory.FactoryController(); target = FakeProcess(pid=789)
+            controller.stop_owned(target, "supervisor")
+            run.assert_not_called()
     def test_supervisor_command_is_fixed(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory.subprocess, "Popen", return_value=FakeProcess()) as popen:
             controller = factory.FactoryController(); controller.start_supervisor("repair", "claude,codex")

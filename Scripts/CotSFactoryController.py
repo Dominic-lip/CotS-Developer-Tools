@@ -263,11 +263,19 @@ class FactoryController:
     def stop_owned(self, process: subprocess.Popen[str] | None, label: str) -> None:
         if process is None or process.poll() is not None:
             return
+        pid = process.pid
         process.terminate()
         try:
             process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             process.kill(); process.wait(timeout=10)
+        # terminate()/kill() only end this one process. The supervisor spawns
+        # its own `claude -p`/`codex` child as a separate OS process, which
+        # Windows does not tie to its parent's lifetime, so it survives as an
+        # orphan that keeps mutating the working tree as an undetected second
+        # agent. Sweep the whole tree rooted at the owned PID to close that.
+        if sys.platform.startswith("win"):
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, check=False)
         self.save(f"Owned {label} stopped")
 
     def start_supervisor(self, prompt: str | None = None, agents: str = "codex,claude") -> None:
