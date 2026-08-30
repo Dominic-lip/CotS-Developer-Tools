@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import io
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -10,6 +12,11 @@ spec = importlib.util.spec_from_file_location("factory", SCRIPTS / "CotSFactoryC
 factory = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(factory)
+
+dashboard_spec = importlib.util.spec_from_file_location("factory_dashboard", SCRIPTS / "CotSFactoryDashboard.py")
+dashboard = importlib.util.module_from_spec(dashboard_spec)
+assert dashboard_spec.loader is not None
+dashboard_spec.loader.exec_module(dashboard)
 
 
 class FakeProcess:
@@ -71,6 +78,58 @@ class TestOwnedProcesses(unittest.TestCase):
             controller = factory.FactoryController(); controller.start_supervisor("repair", "claude,codex")
             args = popen.call_args.args[0]
             self.assertIn(str(factory.SUPERVISOR_SCRIPT), args); self.assertIn("--max-turns", args); self.assertNotIn("shell", popen.call_args.kwargs)
+
+
+class TtyBuffer(io.StringIO):
+    def isatty(self): return True
+
+
+class TestFactoryDashboard(unittest.TestCase):
+    def snapshot(self, **overrides):
+        value = {
+            "factory": "RUNNING", "started_at": time.time() - 10, "supervisor_state": "RUNNING_CODEX",
+            "host_state": "READY", "git_branch": "main", "git_status": "clean", "last_commit": "123abcd Subject",
+            "supervisor": {"state": "RUNNING_CODEX", "task": "TASK-001", "task_title": "Shared Task Runner",
+                           "phase": "VALIDATION", "current_action": "Reading validation", "updated_at": time.time() - 5,
+                           "active_agent": "codex", "preferred_agent": "codex", "turn_count": 3, "rotation_count": 1,
+                           "codex": {"status": "ACTIVE", "version": "0.1"}, "claude": {"status": "IDLE", "version": "2.0"}},
+            "recent_events": ["07:42:11  Codex turn started"],
+        }
+        value.update(overrides)
+        return value
+
+    def test_spinner_progression_and_state_mapping(self):
+        self.assertNotEqual(dashboard.spinner_frame(0), dashboard.spinner_frame(1))
+        self.assertEqual(dashboard.status_style("RUNNING_CODEX"), ("WORKING", "cyan"))
+        self.assertEqual(dashboard.status_style("HUMAN_REQUIRED"), ("HUMAN_REQUIRED", "red"))
+        self.assertEqual(dashboard.status_style("FAILED"), ("FAILED", "red"))
+        self.assertEqual(dashboard.status_style("COMPLETE"), ("COMPLETE", "green"))
+
+    def test_task_title_phase_and_terminal_states_render(self):
+        rendered = dashboard.render_frame(self.snapshot(), width=90)
+        self.assertIn("TASK-001", rendered); self.assertIn("Shared Task Runner", rendered); self.assertIn("VALIDATION", rendered)
+        self.assertIn("COMPLETE", dashboard.render_frame(self.snapshot(factory="COMPLETE"), width=90))
+        self.assertIn("HUMAN_REQUIRED", dashboard.render_frame(self.snapshot(factory="HUMAN_REQUIRED"), width=90))
+        self.assertIn("FAILED", dashboard.render_frame(self.snapshot(factory="FAILED"), width=90))
+
+    def test_recovery_section_is_conditional(self):
+        self.assertNotIn("Recovery\n", dashboard.render_frame(self.snapshot(), width=90))
+        recovered = self.snapshot(recovery={"state": "REPAIRING", "category": "RECOVERABLE_HOST_MCP", "incident": "abc", "attempt": 2, "reason": "host down"})
+        rendered = dashboard.render_frame(recovered, width=90)
+        self.assertIn("Recovery", rendered); self.assertIn("RECOVERABLE_HOST_MCP", rendered); self.assertIn("Attempt 2/3", rendered)
+
+    def test_events_are_human_safe_and_bounded(self):
+        rendered = dashboard.render_frame(self.snapshot(recent_events=["\x1b[31m{\"jsonrpc\":\"2.0\"}\nRaw" for _ in range(20)]), width=90)
+        self.assertNotIn("\x1b", rendered); self.assertNotIn("\nRaw", rendered)
+        self.assertNotIn("jsonrpc", rendered)
+
+    def test_shorter_redraw_erases_rows_and_plain_fallback_has_no_ansi(self):
+        stream = TtyBuffer(); sink = dashboard.TerminalDashboard(stream, color=True)
+        sink.draw(self.snapshot(supervisor={"current_action": "x" * 300}))
+        sink.draw(self.snapshot(supervisor={"current_action": "done"}))
+        self.assertGreaterEqual(stream.getvalue().count("\x1b[K"), 2)
+        plain = io.StringIO(); dashboard.TerminalDashboard(plain, color=False).draw(self.snapshot())
+        self.assertNotIn("\x1b", plain.getvalue())
 
 
 if __name__ == "__main__": unittest.main()

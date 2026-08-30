@@ -12,10 +12,16 @@ import http.client
 import json
 import subprocess
 import sys
+import threading
 import time
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+try:  # Supports both ``python Scripts/...`` and importlib-loaded unit tests.
+    from CotSFactoryDashboard import TerminalDashboard, strip_terminal_controls
+except ModuleNotFoundError:
+    from Scripts.CotSFactoryDashboard import TerminalDashboard, strip_terminal_controls
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "Scripts"
@@ -26,6 +32,7 @@ HOST_SCRIPT = SCRIPTS / "CotSHostMcp.py"
 SUPERVISOR_SCRIPT = SCRIPTS / "CotSAgentSupervisor.py"
 MAX_REPAIR_ATTEMPTS = 3
 POLL_SECONDS = 1.0
+DASHBOARD_REFRESH_SECONDS = 0.75
 
 
 class GateCategory(str, Enum):
@@ -129,25 +136,82 @@ class FactoryController:
         self.state = read_json(STATE_PATH, {"repair_attempts": {}, "recent_events": []})
         self.state.setdefault("repair_attempts", {})
         self.state.setdefault("recent_events", [])
+        self.state.setdefault("started_at", time.time())
+        self.dashboard_stop = threading.Event()
+        self.dashboard_thread: threading.Thread | None = None
+        self._git_snapshot: dict[str, Any] = {}
+        self._git_snapshot_at = 0.0
 
     def save(self, event: str | None = None, **fields: Any) -> None:
         self.state.update(fields)
+        self.state["updated_at"] = time.time()
         if event:
-            self.state["recent_events"] = (self.state["recent_events"] + [event])[-10:]
+            stamp = time.strftime("%H:%M:%S")
+            self.state["recent_events"] = (self.state["recent_events"] + [f"{stamp}  {strip_terminal_controls(event)}"])[-10:]
         atomic_json(STATE_PATH, self.state)
+
+    @staticmethod
+    def task_title(task: object) -> str:
+        """Read a task heading for display only; task selection remains supervisor-owned."""
+        task_id = str(task or "")
+        if not task_id.startswith("TASK-"):
+            return ""
+        number = task_id.removeprefix("TASK-").split("-", 1)[0]
+        for path in sorted((REPO / "Tasks").glob(f"{number}*")):
+            try:
+                for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.startswith("#"):
+                        return line.lstrip("# ").strip()
+            except OSError:
+                continue
+        return ""
+
+    def dashboard_snapshot(self) -> dict[str, Any]:
+        """Assemble telemetry for presentation without feeding it into control flow."""
         checkpoint = read_json(SUPERVISOR_STATE, {})
-        recovery = self.state.get("recovery", {})
-        print("\n".join((
-            "COTS AUTONOMOUS FACTORY",
-            f"Factory: {self.state.get('factory', 'STARTING')}",
-            f"Supervisor: {self.state.get('supervisor_state', 'STARTING')}",
-            f"Host MCP: {self.state.get('host_state', 'UNKNOWN')}",
-            f"Task: {checkpoint.get('task', 'RECONCILING')}",
-            f"Phase: {checkpoint.get('phase', 'RECONCILING')}",
-            f"Active Agent: {checkpoint.get('active_agent', 'none')}",
-            f"Recovery: state={recovery.get('state', 'IDLE')} category={recovery.get('category', 'none')} attempt={recovery.get('attempt', 0)}/{MAX_REPAIR_ATTEMPTS}",
-            f"Event: {event or 'state updated'}",
-        )), flush=True)
+        snapshot = dict(self.state)
+        snapshot["supervisor"] = checkpoint
+        snapshot["task_title"] = self.task_title(checkpoint.get("task"))
+        snapshot["next_expected_action"] = (
+            snapshot.get("recovery", {}).get("current_action")
+            or checkpoint.get("scheduled_task")
+            or ("Monitor active agent turn" if str(checkpoint.get("state", "")).startswith("RUNNING_") else None)
+        )
+        if time.monotonic() - self._git_snapshot_at >= 5.0:
+            try:
+                self._git_snapshot = {"git_branch": fixed_git("rev-parse", "--abbrev-ref", "HEAD").strip() or "?"}
+                status_lines = [line for line in fixed_git("status", "--porcelain=v1").splitlines() if line.strip()]
+                self._git_snapshot["git_status"] = "clean" if not status_lines else f"dirty ({len(status_lines)} paths)"
+                self._git_snapshot["git_status_counts"] = {
+                    "protected": sum(1 for line in status_lines if not line[3:].replace("\\", "/").startswith("Scripts/")),
+                    "untracked_other": sum(1 for line in status_lines if line.startswith("??") and not line[3:].replace("\\", "/").startswith("Scripts/")),
+                    "supervisor": sum(1 for line in status_lines if line[3:].replace("\\", "/").startswith("Scripts/")),
+                }
+                self._git_snapshot["last_commit"] = fixed_git("log", "-1", "--format=%h %s").strip() or "(no commits)"
+                self._git_snapshot_at = time.monotonic()
+            except Exception:
+                self._git_snapshot = {"git_branch": "?", "git_status": "unavailable", "last_commit": "?"}
+                self._git_snapshot_at = time.monotonic()
+        snapshot.update(self._git_snapshot)
+        return snapshot
+
+    def start_dashboard(self) -> None:
+        if self.dashboard_thread is not None:
+            return
+        dashboard = TerminalDashboard()
+        def refresh() -> None:
+            while not self.dashboard_stop.is_set():
+                dashboard.draw(self.dashboard_snapshot())
+                self.dashboard_stop.wait(DASHBOARD_REFRESH_SECONDS)
+            dashboard.draw(self.dashboard_snapshot())
+        self.dashboard_thread = threading.Thread(target=refresh, name="cots-factory-dashboard", daemon=True)
+        self.dashboard_thread.start()
+
+    def stop_dashboard(self) -> None:
+        self.dashboard_stop.set()
+        if self.dashboard_thread is not None:
+            self.dashboard_thread.join(timeout=3)
+            self.dashboard_thread = None
 
     def start_host(self) -> None:
         if host_ready():
@@ -212,28 +276,32 @@ class FactoryController:
         return True
 
     def run(self) -> int:
-        self.start_host()
-        self.start_supervisor()
-        repair_mode = False
-        while True:
-            assert self.supervisor is not None
-            exit_code = self.supervisor.poll()
-            if exit_code is None:
-                time.sleep(POLL_SECONDS); continue
-            if repair_mode:
+        self.start_dashboard()
+        try:
+            self.start_host()
+            self.start_supervisor()
+            repair_mode = False
+            while True:
+                assert self.supervisor is not None
+                exit_code = self.supervisor.poll()
+                if exit_code is None:
+                    time.sleep(POLL_SECONDS); continue
+                if repair_mode:
                 # A repair turn is bounded to one completed supervisor turn.
                 # Its own validation/commit result is in the checkpoint and
                 # protocol log; only then is the normal task supervisor relaunched.
-                self.save("Repair turn ended; applying controlled restarts", supervisor_state="RESTARTING")
-                changed = fixed_git("show", "--format=", "--name-only", "HEAD").replace("\\", "/").splitlines()
-                if "Scripts/CotSHostMcp.py" in changed and self.host is not None:
-                    self.stop_owned(self.host, "Host MCP"); self.host = None; self.start_host()
-                repair_mode = False
-                self.start_supervisor()
-                continue
-            if not self.handle_gate(exit_code):
-                return 0
-            repair_mode = True
+                    self.save("Repair turn ended; applying controlled restarts", supervisor_state="RESTARTING")
+                    changed = fixed_git("show", "--format=", "--name-only", "HEAD").replace("\\", "/").splitlines()
+                    if "Scripts/CotSHostMcp.py" in changed and self.host is not None:
+                        self.stop_owned(self.host, "Host MCP"); self.host = None; self.start_host()
+                    repair_mode = False
+                    self.start_supervisor()
+                    continue
+                if not self.handle_gate(exit_code):
+                    return 0
+                repair_mode = True
+        finally:
+            self.stop_dashboard()
 
 
 def main() -> int:
