@@ -26,6 +26,8 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetReferences(const FString& ObjectPath, bool bReferencers);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetBlueprint(const FString& ObjectPath);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetAnimationAsset(const FString& ObjectPath);
+    /** Resolves the skeleton for a Skeleton/SkeletalMesh/AnimationAsset/AnimBlueprint, lists its declared compatible skeletons, and (if CandidateSkeletonPath is non-empty) reports whether that candidate is compatible via UE's native skeleton-compatibility check. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetSkeletonCompatibility(const FString& ObjectPath, const FString& CandidateSkeletonPath);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetPlugins(const FString& NameFilter);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString FindDuplicateNames(const FString& ShortName);
 };

@@ -14,6 +14,7 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimationAsset.h"
 #include "Animation/BlendSpace.h"
+#include "Animation/Skeleton.h"
 #include "Components/ActorComponent.h"
 #include "Curves/CurveFloat.h"
 #include "GameFramework/Actor.h"
@@ -336,6 +337,38 @@ FString UCotSInspectionToolset::GetAnimationAsset(const FString& ObjectPath)
     else { return FCotSOperationResult::Fail(TEXT("CotS.Inspection.GetAnimationAsset"), TEXT("unsupported_animation_asset"), TEXT("The object is not a Skeleton, SkeletalMesh, AnimationSequence, AnimBlueprint, or BlendSpace.")).ToJson(); }
     if (const UAnimSequence* Sequence = Cast<UAnimSequence>(Object)) { Result.Data->SetNumberField(TEXT("play_length_seconds"), Sequence->GetPlayLength()); Result.Data->SetNumberField(TEXT("sampled_keys"), Sequence->GetNumberOfSampledKeys()); }
     if (const UBlendSpace* BlendSpace = Cast<UBlendSpace>(Object)) { Result.Data->SetNumberField(TEXT("sample_count"), BlendSpace->GetNumberOfBlendSamples()); }
+    return Result.ToJson();
+}
+
+FString UCotSInspectionToolset::GetSkeletonCompatibility(const FString& ObjectPath, const FString& CandidateSkeletonPath)
+{
+    UObject* Object = LoadObject<UObject>(nullptr, *ObjectPath);
+    if (!Object) { return InvalidPath(TEXT("CotS.Inspection.GetSkeletonCompatibility"), ObjectPath).ToJson(); }
+
+    const USkeleton* Skeleton = nullptr;
+    if (const USkeletalMesh* Mesh = Cast<USkeletalMesh>(Object)) { Skeleton = Mesh->GetSkeleton(); }
+    else if (const UAnimationAsset* Animation = Cast<UAnimationAsset>(Object)) { Skeleton = Animation->GetSkeleton(); }
+    else if (const UAnimBlueprint* AnimationBlueprint = Cast<UAnimBlueprint>(Object)) { Skeleton = AnimationBlueprint->TargetSkeleton; }
+    else if (const USkeleton* DirectSkeleton = Cast<USkeleton>(Object)) { Skeleton = DirectSkeleton; }
+
+    if (!Skeleton) { return FCotSOperationResult::Fail(TEXT("CotS.Inspection.GetSkeletonCompatibility"), TEXT("unsupported_animation_asset"), TEXT("The object is not a Skeleton, SkeletalMesh, AnimationAsset, or AnimBlueprint, or it has no assigned skeleton.")).ToJson(); }
+
+    FCotSOperationResult Result = FCotSOperationResult::Succeed(TEXT("CotS.Inspection.GetSkeletonCompatibility"));
+    Result.AddAffectedObject(PathOf(Skeleton));
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("skeleton"), PathOf(Skeleton));
+
+    TArray<FAssetData> CompatibleAssets;
+    Skeleton->GetCompatibleSkeletonAssets(CompatibleAssets);
+    SetAssets(Result.Data, TEXT("declared_compatible_skeletons"), CompatibleAssets);
+
+    if (!CandidateSkeletonPath.IsEmpty())
+    {
+        FAssetData CandidateAssetData;
+        if (!GetAssetData(CandidateSkeletonPath, CandidateAssetData)) { return InvalidPath(TEXT("CotS.Inspection.GetSkeletonCompatibility"), CandidateSkeletonPath).ToJson(); }
+        Result.Data->SetStringField(TEXT("candidate_skeleton"), CandidateSkeletonPath);
+        Result.Data->SetBoolField(TEXT("is_compatible"), Skeleton->IsCompatibleForEditor(CandidateAssetData));
+    }
     return Result.ToJson();
 }
 

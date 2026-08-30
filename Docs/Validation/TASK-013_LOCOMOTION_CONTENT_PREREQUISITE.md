@@ -74,17 +74,53 @@ ToolLab (forcing a fresh Asset Registry scan), and verified:
   `MapCheck: Map check complete: 0 Error(s), 0 Warning(s)` — nothing related
   to the new content.
 
+## Second increment: native skeleton-compatibility inspection
+
+Added `UCotSInspectionToolset::GetSkeletonCompatibility(ObjectPath,
+CandidateSkeletonPath)` to the existing Inspection toolset
+(`UnrealPlugin/CotSDeveloperTools/Source/CotSDeveloperTools/{Public,Private}/Inspection/CotSInspectionToolset.{h,cpp}`),
+directly addressing the first TASK-013 target capability, "Inspect skeleton
+compatibility":
+
+- Resolves the skeleton for a `Skeleton`/`SkeletalMesh`/`AnimationAsset`/
+  `AnimBlueprint` object (reusing the same resolution pattern as the
+  existing `GetAnimationAsset`).
+- Reports the skeleton's declared compatible-skeleton list via UE 5.8's
+  native `USkeleton::GetCompatibleSkeletonAssets` (asset-registry-based, no
+  loading required).
+- When a candidate skeleton path is supplied, reports `is_compatible` via
+  UE's native `USkeleton::IsCompatibleForEditor(const FAssetData&)` check —
+  the real compatibility semantics the Skeleton Editor's own "Compatible
+  Skeletons" UI uses, not a custom reimplementation.
+
+**Build**: canonical `Build-ToolLab.cmd` — `Result: Succeeded`, exit 0.
+
+**Test**: added `CotS.Inspection.SkeletonCompatibility` to
+`CotSFoundationTests.cpp`, exercising the *committed, permanent* imported
+content above (not disposable fixtures): a direct self-compatibility check
+on `SK_Mannequin` (`is_compatible: true`), skeleton resolution from
+`MM_Idle` back to `SK_Mannequin`, and a clean failure on a nonexistent
+path. Full `RunCotSAutomation` pass: 13/13 tests
+`Result={Success}`, `TEST COMPLETE. EXIT CODE: 0`.
+
+**Live verification** (native Unreal MCP, post-build): `GetSkeletonCompatibility`
+called against `MF_Unarmed_Walk_Fwd` with `SK_Mannequin` as the candidate
+returned `"skeleton": ".../SK_Mannequin.SK_Mannequin"`, `"is_compatible": true`,
+confirming the capability works end-to-end against the real imported
+locomotion content, not just in the automation test process.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
-  locomotion content).
-- Implement the AnimationAuthoringToolset: skeleton compatibility/duplicate
-  detection, retarget inspect/batch, Blend Space create/configure, AnimBP/
-  state-machine create/configure, root-motion/IK policy checks, locomotion
-  validation and test running.
+  locomotion content or to check compatibility against it).
+- Implement retarget asset inspect/batch, Blend Space create/configure,
+  AnimBP/state-machine create/configure, root-motion/IK policy checks,
+  locomotion validation and test running. (Skeleton compatibility inspection
+  and duplicate-name detection — via the pre-existing `FindDuplicateNames` —
+  are now covered.)
 - Run the disposable-test-area acceptance test end-to-end and report exact
   assets/results.
 
-Status remains `PARTIAL`, not `COMPLETE_VERIFIED` — this record only closes
-the content-prerequisite gap.
+Status remains `PARTIAL`, not `COMPLETE_VERIFIED` — this record covers the
+content prerequisite plus one of eight target capabilities.

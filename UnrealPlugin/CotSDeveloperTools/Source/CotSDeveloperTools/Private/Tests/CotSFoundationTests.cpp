@@ -155,6 +155,31 @@ bool FCotSInspectionExactPathTest::RunTest(const FString& Parameters)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCotSInspectionSkeletonCompatibilityTest, "CotS.Inspection.SkeletonCompatibility", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters)
+{
+    // Exercises the TASK-013 locomotion content prerequisite (imported Epic
+    // template Mannequin skeleton + Unarmed idle animation), not disposable
+    // test fixtures -- both assets are committed, permanent project content.
+    const FString SkeletonPath = TEXT("/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin");
+    const FString IdlePath = TEXT("/Game/Characters/Mannequins/Anims/Unarmed/MM_Idle.MM_Idle");
+
+    TSharedPtr<FJsonObject> SkeletonJson;
+    TestTrue(TEXT("Direct skeleton compatibility query returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetSkeletonCompatibility(SkeletonPath, SkeletonPath)), SkeletonJson));
+    TestTrue(TEXT("Direct skeleton compatibility query succeeds"), SkeletonJson.IsValid() && SkeletonJson->GetBoolField(TEXT("success")));
+    TestTrue(TEXT("A skeleton is reported compatible with itself"), SkeletonJson->GetObjectField(TEXT("data"))->GetBoolField(TEXT("is_compatible")));
+
+    TSharedPtr<FJsonObject> AnimJson;
+    TestTrue(TEXT("Animation-asset skeleton resolution returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetSkeletonCompatibility(IdlePath, FString())), AnimJson));
+    TestTrue(TEXT("Animation-asset skeleton resolution succeeds"), AnimJson.IsValid() && AnimJson->GetBoolField(TEXT("success")));
+    TestEqual(TEXT("Idle animation resolves to the imported Mannequin skeleton"), AnimJson->GetObjectField(TEXT("data"))->GetStringField(TEXT("skeleton")), SkeletonPath);
+
+    TSharedPtr<FJsonObject> MissingJson;
+    TestTrue(TEXT("Nonexistent object path returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetSkeletonCompatibility(TEXT("/Game/Characters/Mannequins/Meshes/Missing.Missing"), FString())), MissingJson));
+    TestFalse(TEXT("Nonexistent object path fails cleanly"), MissingJson.IsValid() && MissingJson->GetBoolField(TEXT("success")));
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCotSMutationRegistrationTest, "CotS.Mutation.ToolRegistration", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FCotSMutationRegistrationTest::RunTest(const FString& Parameters)
 {
