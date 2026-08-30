@@ -157,10 +157,10 @@ class NullStatusBusIO(unittest.TestCase):
 
 class TestRoadmapCompletionState(unittest.TestCase):
     def test_checked_in_state_schedules_earliest_unverified_foundation_task(self):
-        self.assertEqual(sup.next_required_task(), "TASK-006")
+        self.assertEqual(sup.next_required_task(), "TASK-012")
         verified, reason = sup.foundation_completion_decision()
         self.assertFalse(verified)
-        self.assertEqual(reason, "Foundation gate outstanding: TASK-006")
+        self.assertEqual(reason, "Foundation gate outstanding: TASK-012")
 
     def test_malformed_or_incomplete_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -171,7 +171,7 @@ class TestRoadmapCompletionState(unittest.TestCase):
 
     def test_unverified_complete_marker_has_a_scheduler_instruction(self):
         instruction = sup.scheduled_task_instruction()
-        self.assertIn("TASK-006", instruction)
+        self.assertIn("TASK-012", instruction)
         self.assertIn("durable evidence", instruction)
 
     def test_provider_self_validation_rule_uses_the_active_adapter(self):
