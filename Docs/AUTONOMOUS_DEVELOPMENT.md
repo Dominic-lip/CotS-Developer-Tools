@@ -78,6 +78,18 @@ supervisor instance lease is released. It never forces a release of the
 ToolLab mutation lock it does not itself own; that remains the acting agent's
 own responsibility to reconcile on its next turn.
 
+### Provider self-validation
+
+When acceptance requires "Codex does X" or "Claude does X" and that provider
+is already the active supervisor adapter, the proof is performed through that
+active adapter. The supervisor must not recursively launch the same provider's
+standalone CLI merely to prove client compatibility, unless the task explicitly
+requires testing the standalone launcher binary. A sandbox or network block
+introduced only by recursive provider invocation is an unsupported validation
+topology, not a `HUMAN_GATE`, if the active first-party adapter can produce the
+equivalent acceptance evidence. Standalone launchers remain covered by their
+normal syntax/dry-run checks.
+
 ### Usage-limit detection, failed-turn classification, and the hot-loop breaker
 
 Codex usage exhaustion is classified from the real Codex 0.151.0 App Server

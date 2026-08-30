@@ -174,6 +174,12 @@ class TestRoadmapCompletionState(unittest.TestCase):
         self.assertIn("TASK-001", instruction)
         self.assertIn("durable evidence", instruction)
 
+    def test_provider_self_validation_rule_uses_the_active_adapter(self):
+        self.assertIn("active supervisor\nadapter", sup.PROVIDER_SELF_VALIDATION_RULE)
+        self.assertIn("unsupported validation topology", sup.PROVIDER_SELF_VALIDATION_RULE)
+        self.assertIn(sup.PROVIDER_SELF_VALIDATION_RULE, sup.CODEX_START)
+        self.assertIn(sup.PROVIDER_SELF_VALIDATION_RULE, sup.CLAUDE_START)
+
 
 # ---------------------------------------------------------------------------
 # 1. Codex usageLimitExceeded classification against the ACTUAL captured

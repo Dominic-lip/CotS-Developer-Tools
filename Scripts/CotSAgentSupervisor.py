@@ -138,6 +138,15 @@ Also emit, each on its own line whenever known, SUPERVISOR_TASK: <task id>
 and SUPERVISOR_PHASE: <short current phase>. Do not stop for routine
 reporting."""
 
+PROVIDER_SELF_VALIDATION_RULE = """When an acceptance criterion requires a
+provider to perform an action and that provider is the active supervisor
+adapter, perform the proof in this active adapter. Do not recursively launch
+the same provider's standalone CLI from inside its own managed session unless
+the task explicitly requires testing that standalone launcher binary. A
+sandbox or network restriction caused only by such recursive invocation is an
+unsupported validation topology, not a HUMAN_GATE, when this first-party
+adapter path provides equivalent client acceptance evidence."""
+
 CODEX_START = f"""Read and follow AGENTS.md and Docs/AUTONOMOUS_DEVELOPMENT.md.
 Work autonomously through the next incomplete task. This App Server thread is
 the sole mutating agent and owns the supervisor lease itself; do not mistake
@@ -158,6 +167,8 @@ command with the task's explicit repository-relative files. The configured
 auto-reviewer, not a human and not this supervisor, decides that fixed request.
 Never request escalation for any other shell, Git, process, filesystem, or
 network operation.
+
+{PROVIDER_SELF_VALIDATION_RULE}
 
 {MARKER_INSTRUCTIONS}"""
 
@@ -184,6 +195,8 @@ for status/diff/staged task completion/commit/push, and
 `Scripts\\Build-ToolLab.cmd` for the canonical build. You cannot run arbitrary
 shell commands; do not ask for one. Never write Shardlands or mutate
 production CotS without an explicit task authorization.
+
+{PROVIDER_SELF_VALIDATION_RULE}
 
 For CotS Host lifecycle mutations use the provider-neutral task identity
 `supervisor-task-<task-number-lowercase>` (for example `supervisor-task-012`),
