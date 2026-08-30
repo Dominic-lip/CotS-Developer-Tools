@@ -8,7 +8,7 @@
     {"id":"TASK-003","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-003_MCP_CONNECTIVITY.md: independent Codex and Claude native Unreal MCP connection/read proofs against the same running CotSToolLab editor"]},
     {"id":"TASK-004","status":"COMPLETE_VERIFIED","evidence":["Docs/MCP_CAPABILITY_MATRIX.md: Codex full audit plus 2026-08-30 Claude standby critical-read compatibility sample (viewport, automation discovery, asset search, logs)"]},
     {"id":"TASK-005","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-005_PLUGIN_FOUNDATION.md: canonical build success plus 12/12 CotS.* automation tests proving editor startup and module/toolset load"]},
-    {"id":"TASK-006","status":"COMPLETE_BUT_EVIDENCE_MISSING"},
+    {"id":"TASK-006","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-006_INSPECTION_FOUNDATION.md: ambiguous duplicate-name asset proof reused from the TASK-005 CotS.Inspection.ExactPathsAndEmptyReferences automation run"]},
     {"id":"TASK-007","status":"COMPLETE_VERIFIED","evidence":["a9d1d94: Docs/EXECUTION_BRIDGE.md"]},
     {"id":"TASK-008","status":"COMPLETE_BUT_EVIDENCE_MISSING"},
     {"id":"TASK-008A","status":"PARTIAL"},
