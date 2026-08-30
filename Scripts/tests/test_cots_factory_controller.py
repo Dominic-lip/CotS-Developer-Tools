@@ -80,6 +80,92 @@ class TestOwnedProcesses(unittest.TestCase):
             self.assertIn(str(factory.SUPERVISOR_SCRIPT), args); self.assertIn("--max-turns", args); self.assertNotIn("shell", popen.call_args.kwargs)
 
 
+class TestSupervisorLifecycleMonitoring(unittest.TestCase):
+    def controller_for_checkpoint(self, directory, checkpoint, process=None):
+        state_path = Path(directory) / "factory.json"
+        supervisor_path = Path(directory) / "supervisor.json"
+        supervisor_path.write_text(json.dumps(checkpoint), encoding="utf-8")
+        patches = mock.patch.object(factory, "STATE_PATH", state_path), mock.patch.object(factory, "SUPERVISOR_STATE", supervisor_path)
+        return patches, process or FakeProcess()
+
+    def test_active_states_are_nonterminal(self):
+        states = ("RUNNING_CODEX", "RUNNING_CLAUDE", "RECONCILING", "ROTATING_AGENT", "WAITING_FOR_AGENT_CAPACITY")
+        with tempfile.TemporaryDirectory() as directory:
+            for state in states:
+                with self.subTest(state=state):
+                    patches, process = self.controller_for_checkpoint(directory, {"state": state, "updated_at": 1000.0})
+                    with patches[0], patches[1]:
+                        controller = factory.FactoryController(); controller.supervisor = process
+                        controller.state["supervisor_started_at"] = 900.0
+                        self.assertEqual(controller.live_supervisor_boundary(now=1001.0), (None, None))
+                        self.assertFalse(process.terminated)
+
+    def test_unknown_fresh_state_does_not_kill_supervisor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            patches, process = self.controller_for_checkpoint(directory, {"state": "FUTURE_PROVIDER_PHASE", "updated_at": 1000.0})
+            with patches[0], patches[1]:
+                controller = factory.FactoryController(); controller.supervisor = process
+                controller.state["supervisor_started_at"] = 900.0
+                self.assertEqual(controller.live_supervisor_boundary(now=1001.0), (None, None))
+                self.assertFalse(process.terminated)
+
+    def test_actual_child_exit_is_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            patches, process = self.controller_for_checkpoint(directory, {"state": "RUNNING_CLAUDE", "updated_at": 1000.0}, FakeProcess(exit_code=1))
+            with patches[0], patches[1]:
+                controller = factory.FactoryController(); controller.supervisor = process
+                category, reason = controller.live_supervisor_boundary(now=1001.0)
+                self.assertEqual(category, factory.GateCategory.RECOVERABLE_SUPERVISOR)
+                self.assertIn("exited", reason)
+
+    def test_stale_heartbeat_triggers_bounded_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            patches, process = self.controller_for_checkpoint(directory, {"state": "RUNNING_CLAUDE", "updated_at": 1.0})
+            with patches[0], patches[1]:
+                controller = factory.FactoryController(); controller.supervisor = process
+                category, reason = controller.live_supervisor_boundary(now=1.0 + factory.CHECKPOINT_STALE_SECONDS + 1)
+                self.assertEqual(category, factory.GateCategory.RECOVERABLE_STALE_STATE)
+                self.assertIn("stale", reason)
+
+    def test_recoverable_gate_schedules_repair(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory, "SUPERVISOR_STATE", Path(directory) / "supervisor.json"):
+            checkpoint = {"state": "RECOVERABLE_GATE", "recoverable_gate": {"category": "RECOVERABLE_HOST_MCP", "reason": "host unavailable", "recommended_action": "restart"}}
+            factory.SUPERVISOR_STATE.write_text(json.dumps(checkpoint), encoding="utf-8")
+            controller = factory.FactoryController()
+            with mock.patch.object(controller, "start_supervisor") as start, mock.patch.object(controller, "capture", return_value={"task": "TASK-004"}):
+                self.assertTrue(controller.handle_gate(0))
+                start.assert_called_once()
+
+    def test_human_required_and_complete_are_terminal_cleanly(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory, "SUPERVISOR_STATE", Path(directory) / "supervisor.json"):
+            factory.SUPERVISOR_STATE.write_text(json.dumps({"state": "HUMAN_GATE", "human_gate": "choose game design"}), encoding="utf-8")
+            controller = factory.FactoryController()
+            self.assertFalse(controller.handle_gate(0))
+            self.assertEqual(controller.state["factory"], "HUMAN_REQUIRED")
+            factory.SUPERVISOR_STATE.write_text(json.dumps({"state": "COMPLETE"}), encoding="utf-8")
+            controller = factory.FactoryController()
+            self.assertFalse(controller.handle_gate(0))
+            self.assertEqual(controller.state["factory"], "COMPLETE")
+
+
+class TestHostDisconnectNoise(unittest.TestCase):
+    def test_loopback_connection_reset_is_logged_without_traceback(self):
+        host_spec = importlib.util.spec_from_file_location("host_for_disconnect_test", SCRIPTS / "CotSHostMcp.py")
+        host = importlib.util.module_from_spec(host_spec)
+        assert host_spec.loader is not None
+        host_spec.loader.exec_module(host)
+        handler = object.__new__(host.Handler)
+        handler.client_address = ("127.0.0.1", 8010)
+        handler.send_response = lambda *_args: None
+        handler.send_header = lambda *_args: None
+        handler.end_headers = lambda: None
+        handler.wfile = mock.Mock()
+        handler.wfile.write.side_effect = ConnectionResetError("controlled disconnect")
+        with self.assertLogs(host.LOGGER, "DEBUG") as logs:
+            handler.reply(200, {"ok": True})
+        self.assertIn("Loopback MCP client disconnected", "\n".join(logs.output))
+
+
 class TtyBuffer(io.StringIO):
     def isatty(self): return True
 

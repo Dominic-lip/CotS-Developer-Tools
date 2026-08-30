@@ -8,6 +8,7 @@ operations from an MCP client.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import socket
@@ -33,6 +34,7 @@ STATE_FILE = STATE_DIR / "host-state.local.json"
 LOCK_FILE = STATE_DIR / "mutation-lock.local.json"
 HOST, PORT, MCP_PORT = "127.0.0.1", 8010, 8000
 STATE_GUARD = threading.RLock()
+LOGGER = logging.getLogger(__name__)
 
 
 class LifecycleRefused(RuntimeError):
@@ -307,12 +309,23 @@ TOOLS = {
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, _format: str, *_args: object) -> None: pass
+    def loopback_disconnect(self, error: BaseException) -> bool:
+        """A controlled local client shutdown is not a request failure."""
+        host = self.client_address[0] if self.client_address else ""
+        if host in {"127.0.0.1", "::1", "localhost"} and isinstance(error, (ConnectionResetError, BrokenPipeError)):
+            LOGGER.debug("Loopback MCP client disconnected while receiving response: %s", type(error).__name__)
+            return True
+        return False
     def reply(self, code: int, payload: dict[str, Any], extra_headers: dict[str, str] | None = None) -> None:
         body = json.dumps(payload).encode("utf-8")
-        self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body)))
-        for header_name, header_value in (extra_headers or {}).items():
-            self.send_header(header_name, header_value)
-        self.end_headers(); self.wfile.write(body)
+        try:
+            self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body)))
+            for header_name, header_value in (extra_headers or {}).items():
+                self.send_header(header_name, header_value)
+            self.end_headers(); self.wfile.write(body)
+        except (ConnectionResetError, BrokenPipeError) as error:
+            if not self.loopback_disconnect(error):
+                raise
     def do_POST(self) -> None:
         if self.path != "/mcp": self.reply(404, {"error": "not_found"}); return
         try:

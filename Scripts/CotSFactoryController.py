@@ -33,6 +33,22 @@ SUPERVISOR_SCRIPT = SCRIPTS / "CotSAgentSupervisor.py"
 MAX_REPAIR_ATTEMPTS = 3
 POLL_SECONDS = 1.0
 DASHBOARD_REFRESH_SECONDS = 0.75
+CHECKPOINT_STALE_SECONDS = 90.0
+SUPERVISOR_STARTUP_GRACE_SECONDS = 30.0
+TERMINAL_BOUNDARY_WAIT_SECONDS = 15.0
+
+# This is the factory's authoritative interpretation of supervisor states.
+# Keep names emitted by CotSAgentSupervisor plus the transitional provider
+# lifecycle names retained by older checkpoints/dashboard clients.  A state
+# outside this set is *not* a failure while the owned child and its heartbeat
+# are healthy; it follows the UNKNOWN_LIVE_STATE watchdog path below.
+NONTERMINAL_SUPERVISOR_STATES = frozenset({
+    "STARTING", "PREFLIGHT", "RECONCILING", "RUNNING_CODEX", "RUNNING_CLAUDE",
+    "CLAUDE_STARTING", "CLAUDE_READY", "CLAUDE_TURN_STARTING", "ROTATING_AGENT",
+    "WAITING_FOR_AGENT_CAPACITY", "WAITING_FOR_USAGE_RESET", "PROBING_AVAILABILITY",
+    "STALLED_PROVIDER", "CHECKPOINTING", "CONTINUING", "STOPPING",
+})
+TERMINAL_SUPERVISOR_STATES = frozenset({"COMPLETE", "FAILED", "TERMINAL_FAILURE", "RECOVERABLE_GATE", "HUMAN_REQUIRED", "HUMAN_GATE"})
 
 
 class GateCategory(str, Enum):
@@ -56,6 +72,15 @@ def read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
         return value if isinstance(value, dict) else default.copy()
     except (FileNotFoundError, json.JSONDecodeError):
         return default.copy()
+
+
+def read_checkpoint() -> tuple[dict[str, Any], bool]:
+    """Return the raw checkpoint and whether its minimum control shape is valid."""
+    try:
+        value = json.loads(SUPERVISOR_STATE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}, False
+    return value, isinstance(value, dict) and isinstance(value.get("state"), str) and bool(value["state"])
 
 
 def atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -106,9 +131,15 @@ def classify_gate(checkpoint: dict[str, Any], supervisor_exit: int | None = None
         return GateCategory.RECOVERABLE_VALIDATION_TOPOLOGY, reason, "use_active_adapter"
     if state == "HUMAN_GATE" and any(token in reason.lower() for token in ("login", "mfa", "credential", "secret", "subscription", "payment")):
         return GateCategory.HUMAN_REQUIRED, reason, "human_authentication_or_decision"
-    if state == "FAILED" and supervisor_exit not in (None, 0):
+    if state in {"HUMAN_GATE", "HUMAN_REQUIRED"}:
+        return GateCategory.TERMINAL_FAILURE, reason or "human decision required", "inspect"
+    if state == "RECOVERABLE_GATE":
+        return GateCategory.RECOVERABLE_SUPERVISOR, reason or "unstructured recoverable gate", "restart_supervisor"
+    if state in {"FAILED", "TERMINAL_FAILURE"}:
+        return GateCategory.RECOVERABLE_SUPERVISOR, reason or "supervisor failed", "restart_supervisor"
+    if supervisor_exit is not None:
         return GateCategory.RECOVERABLE_SUPERVISOR, reason or "supervisor exited", "restart_supervisor"
-    return GateCategory.TERMINAL_FAILURE, reason or f"supervisor state {state!r}", "inspect"
+    return GateCategory.RECOVERABLE_SUPERVISOR, reason or f"supervisor reached unexpected boundary {state!r}", "restart_supervisor"
 
 
 def incident_fingerprint(category: GateCategory, reason: str, checkpoint: dict[str, Any]) -> str:
@@ -244,7 +275,78 @@ class FactoryController:
         if prompt:
             args += ["--prompt", prompt, "--max-turns", "1"]
         self.supervisor = subprocess.Popen(args, cwd=REPO, text=True)
-        self.save("Supervisor started", factory="RUNNING", supervisor_state="REPAIRING" if prompt else "RUNNING", supervisor_pid=self.supervisor.pid)
+        self.save("Supervisor started", factory="RUNNING", supervisor_state="REPAIRING" if prompt else "RUNNING", supervisor_pid=self.supervisor.pid, supervisor_started_at=time.time())
+
+    @staticmethod
+    def checkpoint_age(checkpoint: dict[str, Any], now: float | None = None) -> float:
+        """Use the durable heartbeat; mtime is a compatibility fallback."""
+        now = time.time() if now is None else now
+        updated_at = checkpoint.get("updated_at")
+        if isinstance(updated_at, (int, float)):
+            return max(0.0, now - updated_at)
+        try:
+            return max(0.0, now - SUPERVISOR_STATE.stat().st_mtime)
+        except OSError:
+            return float("inf")
+
+    @staticmethod
+    def checkpoint_heartbeat_at(checkpoint: dict[str, Any]) -> float:
+        updated_at = checkpoint.get("updated_at")
+        if isinstance(updated_at, (int, float)):
+            return float(updated_at)
+        try:
+            return SUPERVISOR_STATE.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def live_supervisor_boundary(self, now: float | None = None) -> tuple[GateCategory | None, str | None]:
+        """Assess a still-running child without inferring death from its text."""
+        assert self.supervisor is not None
+        if self.supervisor.poll() is not None:
+            return GateCategory.RECOVERABLE_SUPERVISOR, "owned supervisor process exited"
+        checkpoint, valid = read_checkpoint()
+        started_at = float(self.state.get("supervisor_started_at", now or time.time()))
+        current = time.time() if now is None else now
+        if not valid:
+            if current - started_at <= SUPERVISOR_STARTUP_GRACE_SECONDS:
+                return None, None
+            return GateCategory.RECOVERABLE_STALE_STATE, "supervisor checkpoint is structurally invalid"
+        state = checkpoint["state"]
+        age = self.checkpoint_age(checkpoint, current)
+        if age > CHECKPOINT_STALE_SECONDS:
+            return GateCategory.RECOVERABLE_STALE_STATE, f"supervisor heartbeat stale for {age:.0f}s (state {state!r})"
+        if self.checkpoint_heartbeat_at(checkpoint) < started_at:
+            if current - started_at <= SUPERVISOR_STARTUP_GRACE_SECONDS:
+                return None, None
+            return GateCategory.RECOVERABLE_STALE_STATE, "supervisor has not emitted a post-launch checkpoint heartbeat"
+        if state in {"RECOVERABLE_GATE", "FAILED", "TERMINAL_FAILURE"}:
+            category, reason, _ = classify_gate(checkpoint)
+            return category, reason
+        if state in {"HUMAN_GATE", "HUMAN_REQUIRED"}:
+            category, reason, _ = classify_gate(checkpoint)
+            return category, reason
+        if state == "COMPLETE":
+            return GateCategory.TERMINAL_FAILURE, "roadmap completion verified"
+        if state not in NONTERMINAL_SUPERVISOR_STATES:
+            # Fresh unknown states are deliberately nonterminal.  The heartbeat
+            # watchdog remains the bounded recovery mechanism.
+            if self.state.get("unknown_live_state") != state:
+                self.save(f"UNKNOWN_LIVE_STATE: {state}; monitoring fresh owned supervisor", supervisor_state="UNKNOWN_LIVE_STATE", unknown_live_state=state)
+            return None, None
+        if self.state.get("unknown_live_state"):
+            self.save("Recognized supervisor lifecycle state resumed", unknown_live_state=None)
+        return None, None
+
+    def await_terminal_boundary(self, reason: str) -> int | None:
+        """Let a real gate finish its checkpoint/turn boundary before a kill."""
+        assert self.supervisor is not None
+        deadline = time.monotonic() + TERMINAL_BOUNDARY_WAIT_SECONDS
+        while self.supervisor.poll() is None and time.monotonic() < deadline:
+            time.sleep(POLL_SECONDS)
+        if self.supervisor.poll() is None:
+            self.save(f"Supervisor boundary timeout: {reason}; stopping owned child")
+            self.stop_owned(self.supervisor, "supervisor")
+        return self.supervisor.poll()
 
     def capture(self, category: GateCategory, reason: str) -> dict[str, Any]:
         checkpoint = read_json(SUPERVISOR_STATE, {})
@@ -256,12 +358,12 @@ class FactoryController:
             "claude_protocol": tail(COTS / "claude-protocol.log"),
         }
 
-    def handle_gate(self, exit_code: int | None) -> bool:
+    def handle_gate(self, exit_code: int | None, forced: tuple[GateCategory, str] | None = None) -> bool:
         checkpoint = read_json(SUPERVISOR_STATE, {})
         if checkpoint.get("state") == "COMPLETE":
             self.save("Roadmap completion verified", factory="COMPLETE", supervisor_state="STOPPED")
             return False
-        category, reason, _action = classify_gate(checkpoint, exit_code)
+        category, reason = forced if forced else classify_gate(checkpoint, exit_code)[:2]
         fingerprint = incident_fingerprint(category, reason, checkpoint)
         attempts = int(self.state["repair_attempts"].get(fingerprint, 0))
         self.save(f"Supervisor gate {category.value}: {reason}", recovery={"state": "GATED", "category": category.value, "incident": fingerprint, "attempt": attempts})
@@ -285,7 +387,15 @@ class FactoryController:
                 assert self.supervisor is not None
                 exit_code = self.supervisor.poll()
                 if exit_code is None:
-                    time.sleep(POLL_SECONDS); continue
+                    boundary = self.live_supervisor_boundary()
+                    if boundary[0] is None:
+                        time.sleep(POLL_SECONDS); continue
+                    category, reason = boundary
+                    exit_code = self.await_terminal_boundary(reason or "supervisor boundary")
+                    if not self.handle_gate(exit_code, (category, reason or "supervisor boundary")):
+                        return 0
+                    repair_mode = True
+                    continue
                 if repair_mode:
                 # A repair turn is bounded to one completed supervisor turn.
                 # Its own validation/commit result is in the checkpoint and
