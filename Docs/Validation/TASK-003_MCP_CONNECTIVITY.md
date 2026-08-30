@@ -61,14 +61,55 @@ config is correct and persistent. The one requirement Claude's HTTP MCP
 client actually has is that the server be reachable when the client process
 starts.
 
-## Disposition
+## Disposition (superseded by the completed proof below)
 
 ToolLab was deliberately left running (`editor_pid 36516`, `mcp_ready: true`)
-at the end of this turn so that the next Claude process (this supervisor
-architecture starts a fresh `claude -p` process per turn) begins with a
-connectable `unreal-mcp` endpoint and can perform the five Validation-section
-reads in `Tasks/003_MCP_CONNECTIVITY.md` (confirm connection, identify UE
-version, identify `CotSToolLab`, report level/selection, enumerate toolsets)
-using the same native calls Codex already used. No production CotS or
-Shardlands scope was touched; no ToolLab content asset was created, changed,
-or deleted this turn.
+at the end of the prior turn so that the next Claude process (this supervisor
+architecture starts a fresh `claude -p` process per turn) would begin with a
+connectable `unreal-mcp` endpoint. That is exactly what happened.
+
+## Claude — independent native connection/read proof
+
+Date: 2026-08-30. At the start of this turn `unreal-mcp` (`http://127.0.0.1:8000/mcp`)
+was already listed as a successfully connected MCP server (ToolLab had been
+left running from the prior turn), and `mcp__unreal-mcp__list_toolsets`,
+`describe_toolset`, and `call_tool` were available without any additional
+configuration step. `GetToolLabStatus` confirmed the same long-lived editor
+process (`editor_pid: 36516`, unchanged) was still running, with no mutation
+lock held. All five Validation-section reads were performed directly against
+the native endpoint, no filesystem or manual-editor substitute:
+
+1. **Connection confirmed**: `list_toolsets` returned the live registry (40+
+   toolsets — `CotSDeveloperTools.*`, `EditorToolset.*`, `editor_toolset.toolsets.*`,
+   Niagara/Sequencer/GAS/PCG/UMG/etc. — the same registry Codex enumerated).
+2. **Unreal version**: `CotSDeveloperTools.CotSFoundationToolset.GetStatus` ->
+   `"unreal_version": "5.8.1-56057345+++UE5+Release-5.8"`.
+3. **Open project**: `CotSDeveloperTools.CotSInspectionToolset.GetProjectStatus` ->
+   `"project_name": "CotSToolLab"`, `"project_path": "../../../../../../Dev/CotSDeveloperTools/ToolLab/CotSToolLab.uproject"`,
+   `"cots_plugin_enabled": true`, `"cots_module_loaded": true`.
+4. **Current level/selection**: `editor_toolset.toolsets.scene.SceneTools.get_current_level` ->
+   `"/Temp/Untitled_1"` (matches `GetProjectStatus`'s `"current_map"`); `EditorToolset.EditorAppToolset.GetSelectedActors` ->
+   `[]` (no actor currently selected); `GetProjectStatus` also reports `"pie_running": false`.
+5. **Toolset enumeration**: same `list_toolsets` call as (1); `describe_toolset`
+   was additionally used on `EditorToolset.EditorAppToolset`,
+   `editor_toolset.toolsets.scene.SceneTools`, `CotSDeveloperTools.CotSFoundationToolset`,
+   and `CotSDeveloperTools.CotSInspectionToolset` to confirm full tool/schema
+   access, not just names.
+
+Claude's project (`CotSToolLab`), engine version (`5.8.1-56057345+++UE5+Release-5.8`),
+and level (`/Temp/Untitled_1`) match Codex's `Docs/MCP_CAPABILITY_MATRIX.md`
+values exactly, confirming both clients independently inspected the *same*
+running Unreal Editor instance, not two separate editors. This was a purely
+read-only proof: no asset, actor, or level was created, changed, or deleted;
+no production CotS or Shardlands scope was touched.
+
+## Disposition
+
+Both required independent client proofs now exist: Codex's in
+`Docs/MCP_CAPABILITY_MATRIX.md`, Claude's above. The remaining gap identified
+during this task's investigation is process-level, not scope-level: a
+Claude Code MCP HTTP client binds at process start and does not retry a
+server that was unreachable at that moment, so ToolLab must already be
+running before a Claude turn begins for its native connection to succeed.
+That is now recorded as operating guidance for future turns/tasks rather than
+an open acceptance item for TASK-003.
