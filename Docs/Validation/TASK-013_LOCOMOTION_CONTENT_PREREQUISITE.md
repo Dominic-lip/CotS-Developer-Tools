@@ -308,6 +308,27 @@ Host `RunCotSAutomation` operation `4716d48d-468a-42fc-a00a-35ad55d7234c`
 returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
 CODE: 0`. The Host lock was released under `supervisor-task-013`.
 
+## Twelfth increment: guarded AnimBlueprint transition authoring
+
+`UCotSMutationToolset::AddDisposableAnimBlueprintTransition` creates one
+directional transition only between two distinct, exact named States in the
+single initialized State Machine of a disposable AnimBlueprint. It validates a
+finite crossfade in `[0,10]`, uses UE 5.8's public
+`FEdGraphSchemaAction_NewStateNode` lifecycle for the transition-rule graph,
+then calls the public `UAnimStateTransitionNode::CreateConnections` API. The
+exact source, target, rule-graph path, crossfade, and post-write connection
+status are returned; an existing matching directed transition is idempotently
+reported without another mutation.
+
+No transition-rule logic, animation-asset player, AnimGraph output wiring,
+compilation, or saving is claimed. The focused test proves a missing
+disposable AnimBlueprint is rejected before transition graph mutation.
+
+Canonical `Build-ToolLab.cmd` succeeded (`Result: Succeeded`, exit 0). Fixed
+Host `RunCotSAutomation` operation `1027b7ed-c40b-49da-8fa2-52b76aa83275`
+returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
+CODE: 0`. The Host lock was released under `supervisor-task-013`.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
@@ -316,8 +337,8 @@ CODE: 0`. The Host lock was released under `supervisor-task-013`.
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof; provide a valid
   exact-skeleton preview mesh and create/inspect/clean up the guarded Blend
-  Space; add State Machine transitions to a created AnimBP, wire the AnimGraph
-  output, compile and inspect it; apply the
+  Space; add animation-asset nodes and transition rule logic to a created
+  AnimBP, wire the AnimGraph output, compile and inspect it; apply the
   root-motion/IK policy to the complete locomotion set and run its test,
   AnimBP/state-machine create/configure, root-motion/IK policy checks,
   locomotion validation and test running. (Skeleton compatibility inspection

@@ -9,6 +9,7 @@
 #include "AnimGraphNode_StateMachine.h"
 #include "AnimStateEntryNode.h"
 #include "AnimStateNode.h"
+#include "AnimStateTransitionNode.h"
 #include "AnimationStateMachineSchema.h"
 #include "Animation/BlendSpace.h"
 #include "Components/SceneComponent.h"
@@ -436,6 +437,69 @@ FString UCotSMutationToolset::AddDisposableAnimBlueprintState(const FString& Obj
     Result.Data->SetBoolField(TEXT("entry_wired"), StateMachineGraph->EntryNode->GetOutputNode() == StateNode);
     Result.Validation.Add(TEXT("inspect with CotS.Inspection.GetAnimBlueprintStateMachines before adding transitions"));
     return Finish(Result, true, false, TEXT("State authoring is graph-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::AddDisposableAnimBlueprintTransition(const FString& ObjectPath, const FString& SourceStateName, const FString& TargetStateName, double CrossfadeSeconds, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.AddDisposableAnimBlueprintTransition");
+    if (!IsDisposableAssetPath(ObjectPath)) { return FCotSOperationResult::Fail(Op, TEXT("outside_disposable_scope"), TEXT("Transition authoring is restricted to /Game/CotSMutationLive/ exact object paths."), bDryRun).ToJson(); }
+    if (SourceStateName.IsEmpty() || TargetStateName.IsEmpty() || SourceStateName == TargetStateName || !FMath::IsFinite(CrossfadeSeconds) || CrossfadeSeconds < 0.0 || CrossfadeSeconds > 10.0)
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("invalid_transition_request"), TEXT("Source/Target State names must be distinct and CrossfadeSeconds must be finite in [0,10]."), bDryRun).ToJson();
+    }
+    UAnimBlueprint* Blueprint = Cast<UAnimBlueprint>(LoadExactAsset(ObjectPath));
+    if (!Blueprint) { return FCotSOperationResult::Fail(Op, TEXT("animblueprint_not_found"), TEXT("ObjectPath must resolve to a UAnimBlueprint asset."), bDryRun).ToJson(); }
+    UAnimationGraph* AnimGraph = nullptr;
+    for (UEdGraph* Graph : Blueprint->FunctionGraphs) { if (UAnimationGraph* Candidate = Cast<UAnimationGraph>(Graph)) { AnimGraph = Candidate; break; } }
+    if (!AnimGraph) { return FCotSOperationResult::Fail(Op, TEXT("animation_graph_not_found"), TEXT("The AnimBlueprint has no editable UAnimationGraph."), bDryRun).ToJson(); }
+    TArray<UAnimGraphNode_Base*> Machines;
+    AnimGraph->GetGraphNodesOfClass(UAnimGraphNode_StateMachine::StaticClass(), Machines, true);
+    UAnimGraphNode_StateMachine* Machine = Machines.Num() == 1 ? Cast<UAnimGraphNode_StateMachine>(Machines[0]) : nullptr;
+    if (!Machine || !Machine->EditorStateMachineGraph) { return FCotSOperationResult::Fail(Op, TEXT("state_machine_not_found"), TEXT("The AnimBlueprint must contain exactly one initialized State Machine."), bDryRun).ToJson(); }
+    UAnimationStateMachineGraph* StateMachineGraph = Machine->EditorStateMachineGraph;
+    TArray<UAnimStateNode*> States;
+    StateMachineGraph->GetNodesOfClass(States);
+    UAnimStateNode* SourceState = nullptr;
+    UAnimStateNode* TargetState = nullptr;
+    for (UAnimStateNode* State : States)
+    {
+        if (!State) { continue; }
+        if (State->GetStateName().Equals(SourceStateName, ESearchCase::CaseSensitive)) { SourceState = State; }
+        if (State->GetStateName().Equals(TargetStateName, ESearchCase::CaseSensitive)) { TargetState = State; }
+    }
+    if (!SourceState || !TargetState) { return FCotSOperationResult::Fail(Op, TEXT("state_not_found"), TEXT("Both requested State names must resolve in the single State Machine."), bDryRun).ToJson(); }
+    TArray<UAnimStateTransitionNode*> ExistingTransitions;
+    StateMachineGraph->GetNodesOfClass(ExistingTransitions);
+    for (UAnimStateTransitionNode* Transition : ExistingTransitions)
+    {
+        if (Transition && Transition->GetPreviousState() == SourceState && Transition->GetNextState() == TargetState)
+        {
+            FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath);
+            Result.Data = MakeShared<FJsonObject>();
+            Result.Data->SetStringField(TEXT("source_state"), SourceStateName);
+            Result.Data->SetStringField(TEXT("target_state"), TargetStateName);
+            Result.Data->SetStringField(TEXT("transition_graph"), Transition->BoundGraph ? Transition->BoundGraph->GetPathName() : FString());
+            Result.Validation.Add(TEXT("already_contains_requested_transition"));
+            return Finish(Result, false, false, TEXT("Transition authoring is graph-backed and not transaction-backed."));
+        }
+    }
+    FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath);
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("source_state"), SourceStateName);
+    Result.Data->SetStringField(TEXT("target_state"), TargetStateName);
+    Result.Data->SetNumberField(TEXT("crossfade_seconds"), CrossfadeSeconds);
+    if (bDryRun) { Result.Validation.Add(TEXT("validated_directional_transition_creation")); return Finish(Result, true, false, TEXT("Transition authoring is graph-backed and not transaction-backed.")); }
+    Blueprint->Modify();
+    StateMachineGraph->Modify();
+    UAnimStateTransitionNode* Transition = FEdGraphSchemaAction_NewStateNode::SpawnNodeFromTemplate<UAnimStateTransitionNode>(StateMachineGraph, NewObject<UAnimStateTransitionNode>(), FVector2f(480.0f, 0.0f), false);
+    if (!Transition || !Transition->BoundGraph) { return FCotSOperationResult::Fail(Op, TEXT("transition_create_failed"), TEXT("UE could not initialize the transition-rule graph.")).ToJson(); }
+    Transition->CrossfadeDuration = static_cast<float>(CrossfadeSeconds);
+    Transition->CreateConnections(SourceState, TargetState);
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    Result.Data->SetStringField(TEXT("transition_graph"), Transition->BoundGraph->GetPathName());
+    Result.Data->SetBoolField(TEXT("connected"), Transition->GetPreviousState() == SourceState && Transition->GetNextState() == TargetState);
+    Result.Validation.Add(TEXT("inspect with CotS.Inspection.GetAnimBlueprintStateMachines before adding rule logic"));
+    return Finish(Result, true, false, TEXT("Transition authoring is graph-backed and not transaction-backed."));
 }
 
 FString UCotSMutationToolset::AddLocomotionBlendSpaceSample(const FString& BlendSpacePath, const FString& AnimationPath, double Speed, double Direction, bool bDryRun)
