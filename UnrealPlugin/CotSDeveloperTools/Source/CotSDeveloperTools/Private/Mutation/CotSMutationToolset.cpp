@@ -10,9 +10,11 @@
 #include "AnimGraphNode_SequencePlayer.h"
 #include "AnimGraphNode_StateResult.h"
 #include "AnimGraphNode_Root.h"
+#include "AnimGraphNode_TransitionResult.h"
 #include "AnimStateEntryNode.h"
 #include "AnimStateNode.h"
 #include "AnimStateTransitionNode.h"
+#include "AnimationTransitionGraph.h"
 #include "AnimationStateMachineSchema.h"
 #include "Animation/BlendSpace.h"
 #include "Components/SceneComponent.h"
@@ -568,6 +570,67 @@ FString UCotSMutationToolset::SetDisposableAnimBlueprintStateSequence(const FStr
     Result.Data->SetBoolField(TEXT("result_wired"), PoseOutput->LinkedTo.Contains(ResultInput));
     Result.Validation.Add(TEXT("inspect State Machine before AnimGraph output wiring or compilation"));
     return Finish(Result, true, false, TEXT("State content authoring is graph-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::SetDisposableAnimBlueprintTransitionRule(const FString& ObjectPath, const FString& SourceStateName, const FString& TargetStateName, bool bCanEnterTransition, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.SetDisposableAnimBlueprintTransitionRule");
+    if (!IsDisposableAssetPath(ObjectPath)) { return FCotSOperationResult::Fail(Op, TEXT("outside_disposable_scope"), TEXT("Transition-rule authoring is restricted to /Game/CotSMutationLive/ exact object paths."), bDryRun).ToJson(); }
+    if (SourceStateName.IsEmpty() || TargetStateName.IsEmpty() || SourceStateName == TargetStateName)
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("invalid_transition_request"), TEXT("Source and Target State names must be distinct and non-empty."), bDryRun).ToJson();
+    }
+    UAnimBlueprint* Blueprint = Cast<UAnimBlueprint>(LoadExactAsset(ObjectPath));
+    if (!Blueprint) { return FCotSOperationResult::Fail(Op, TEXT("animblueprint_not_found"), TEXT("ObjectPath must resolve to a UAnimBlueprint asset."), bDryRun).ToJson(); }
+    UAnimationGraph* AnimGraph = nullptr;
+    for (UEdGraph* Graph : Blueprint->FunctionGraphs) { if (UAnimationGraph* Candidate = Cast<UAnimationGraph>(Graph)) { AnimGraph = Candidate; break; } }
+    if (!AnimGraph) { return FCotSOperationResult::Fail(Op, TEXT("animation_graph_not_found"), TEXT("The AnimBlueprint has no editable UAnimationGraph."), bDryRun).ToJson(); }
+    TArray<UAnimGraphNode_Base*> Machines;
+    AnimGraph->GetGraphNodesOfClass(UAnimGraphNode_StateMachine::StaticClass(), Machines, true);
+    UAnimGraphNode_StateMachine* Machine = Machines.Num() == 1 ? Cast<UAnimGraphNode_StateMachine>(Machines[0]) : nullptr;
+    if (!Machine || !Machine->EditorStateMachineGraph) { return FCotSOperationResult::Fail(Op, TEXT("state_machine_not_found"), TEXT("The AnimBlueprint must contain exactly one initialized State Machine."), bDryRun).ToJson(); }
+    UAnimStateTransitionNode* RequestedTransition = nullptr;
+    TArray<UAnimStateTransitionNode*> Transitions;
+    Machine->EditorStateMachineGraph->GetNodesOfClass(Transitions);
+    for (UAnimStateTransitionNode* Transition : Transitions)
+    {
+        if (Transition && Transition->GetPreviousState() && Transition->GetNextState()
+            && Transition->GetPreviousState()->GetStateName().Equals(SourceStateName, ESearchCase::CaseSensitive)
+            && Transition->GetNextState()->GetStateName().Equals(TargetStateName, ESearchCase::CaseSensitive))
+        {
+            RequestedTransition = Transition;
+            break;
+        }
+    }
+    if (!RequestedTransition) { return FCotSOperationResult::Fail(Op, TEXT("transition_not_found"), TEXT("The requested exact directed transition must exist in the single State Machine."), bDryRun).ToJson(); }
+    UAnimationTransitionGraph* RuleGraph = Cast<UAnimationTransitionGraph>(RequestedTransition->BoundGraph);
+    UAnimGraphNode_TransitionResult* ResultNode = RuleGraph ? RuleGraph->GetResultNode() : nullptr;
+    if (!ResultNode) { return FCotSOperationResult::Fail(Op, TEXT("transition_result_not_found"), TEXT("The requested transition has no initialized public Transition Result node."), bDryRun).ToJson(); }
+    FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath);
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("source_state"), SourceStateName);
+    Result.Data->SetStringField(TEXT("target_state"), TargetStateName);
+    Result.Data->SetStringField(TEXT("transition_graph"), RuleGraph->GetPathName());
+    Result.Data->SetStringField(TEXT("result_node"), ResultNode->GetPathName());
+    Result.Data->SetBoolField(TEXT("before_can_enter_transition"), ResultNode->Node.bCanEnterTransition);
+    Result.Data->SetBoolField(TEXT("after_can_enter_transition"), bCanEnterTransition);
+    if (ResultNode->Node.bCanEnterTransition == bCanEnterTransition)
+    {
+        Result.Validation.Add(TEXT("already_contains_requested_constant_rule"));
+        return Finish(Result, false, false, TEXT("Transition-rule authoring is graph-backed and not transaction-backed."));
+    }
+    if (bDryRun)
+    {
+        Result.Validation.Add(TEXT("validated_typed_constant_transition_rule"));
+        return Finish(Result, true, false, TEXT("Transition-rule authoring is graph-backed and not transaction-backed."));
+    }
+    Blueprint->Modify();
+    RuleGraph->Modify();
+    ResultNode->Modify();
+    ResultNode->Node.bCanEnterTransition = bCanEnterTransition;
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    Result.Validation.Add(TEXT("compile with CotS.Mutation.CompileBlueprint before saving"));
+    return Finish(Result, true, false, TEXT("Transition-rule authoring is graph-backed and not transaction-backed."));
 }
 
 FString UCotSMutationToolset::WireDisposableAnimBlueprintStateMachineOutput(const FString& ObjectPath, bool bDryRun)

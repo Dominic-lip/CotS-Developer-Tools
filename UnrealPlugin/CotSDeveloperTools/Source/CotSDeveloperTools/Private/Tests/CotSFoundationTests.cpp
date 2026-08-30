@@ -228,6 +228,10 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TestTrue(TEXT("Disposable State sequence dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::SetDisposableAnimBlueprintStateSequence(TEXT("/Game/CotSMutationLive/ABP_Missing.ABP_Missing"), TEXT("Idle"), IdlePath, false, true)), SequenceGuardJson));
     TestFalse(TEXT("Disposable State sequence dry-run rejects a missing AnimBlueprint"), SequenceGuardJson.IsValid() && SequenceGuardJson->GetBoolField(TEXT("success")));
 
+    TSharedPtr<FJsonObject> TransitionRuleGuardJson;
+    TestTrue(TEXT("Disposable transition-rule dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::SetDisposableAnimBlueprintTransitionRule(TEXT("/Game/CotSMutationLive/ABP_Missing.ABP_Missing"), TEXT("Idle"), TEXT("Walk"), true, true)), TransitionRuleGuardJson));
+    TestFalse(TEXT("Disposable transition-rule dry-run rejects a missing AnimBlueprint"), TransitionRuleGuardJson.IsValid() && TransitionRuleGuardJson->GetBoolField(TEXT("success")));
+
     TSharedPtr<FJsonObject> OutputWireGuardJson;
     TestTrue(TEXT("Disposable AnimGraph output dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::WireDisposableAnimBlueprintStateMachineOutput(TEXT("/Game/CotSMutationLive/ABP_Missing.ABP_Missing"), true)), OutputWireGuardJson));
     TestFalse(TEXT("Disposable AnimGraph output dry-run rejects a missing AnimBlueprint"), OutputWireGuardJson.IsValid() && OutputWireGuardJson->GetBoolField(TEXT("success")));

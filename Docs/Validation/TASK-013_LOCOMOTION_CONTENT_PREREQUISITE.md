@@ -367,6 +367,23 @@ Host `RunCotSAutomation` operation `c65da073-6080-43a8-90a9-39c754ec435b`
 returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
 CODE: 0`. The Host lock was released under `supervisor-task-013`.
 
+## Fifteenth increment: guarded constant transition-rule authoring
+
+`UCotSMutationToolset::SetDisposableAnimBlueprintTransitionRule` finds one
+exact directed transition in the single State Machine of a disposable
+AnimBlueprint and changes only its public `UAnimGraphNode_TransitionResult`
+`bCanEnterTransition` property. It returns the exact rule-graph/result-node
+paths and before/after values, refuses absent or ambiguous topology, and is
+idempotent when the requested constant rule is already set. It deliberately
+does not synthesize K2 expression graphs, compile, or save the asset.
+
+The focused test proves a missing disposable AnimBlueprint is rejected before
+transition-rule mutation. Canonical `Build-ToolLab.cmd` succeeded (`Result:
+Succeeded`, exit 0). Fixed Host `RunCotSAutomation` operation
+`2401e2bb-ae2f-40ca-8f77-55e71b9ea1c3` returned exit 0; the editor log records
+13 CotS tests and `TEST COMPLETE. EXIT CODE: 0`. The Host lock was released
+under `supervisor-task-013`.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
@@ -375,8 +392,7 @@ CODE: 0`. The Host lock was released under `supervisor-task-013`.
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof; provide a valid
   exact-skeleton preview mesh and create/inspect/clean up the guarded Blend
-  Space; add transition rule logic to a created AnimBP, compile and inspect
-  it; apply the
+  Space; compile and inspect a created AnimBP; apply the
   root-motion/IK policy to the complete locomotion set and run its test,
   AnimBP/state-machine create/configure, root-motion/IK policy checks,
   locomotion validation and test running. (Skeleton compatibility inspection
