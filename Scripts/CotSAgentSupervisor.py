@@ -43,6 +43,16 @@ LEASE = COTS_DIR / "agent-supervisor-lease.local.lock"
 FOUNDATION_COMPLETION_STATE = REPO / "Docs" / "FOUNDATION_COMPLETION_STATE.json"
 FOUNDATION_TASK_PREFIX = "TASK-0"
 VERIFIED_COMPLETION_STATUS = "COMPLETE_VERIFIED"
+DEFERRED_PROVIDER_VERIFICATION = "DEFERRED_PROVIDER_VERIFICATION"
+
+# This is deliberately a small, reviewed exception list rather than an
+# inferred DAG.  A later task is eligible only when its specification does
+# not rely on the missing behavioural proof.  TASK-015, in contrast, names
+# TASK-012's dual-provider proof as a prerequisite and must remain blocked.
+INDEPENDENT_FOUNDATION_WORK: dict[str, tuple[str, ...]] = {
+    "TASK-013": (),
+    "TASK-014": (),
+}
 
 TURN_TIMEOUT_SECONDS = 2 * 60 * 60
 UPDATE_TIMEOUT_SECONDS = 120
@@ -224,14 +234,14 @@ Inspect source only where needed to verify the checkpoint or changed facts; do
 not reconstruct task history by default.{checkpoint_facts} """ + MARKER_INSTRUCTIONS
 
 
-def scheduled_task_instruction() -> str:
+def scheduled_task_instruction(task_override: str | None = None) -> str:
     """Return the one durable task-selection fact the providers may trust.
 
     The checked-in ledger is deliberately consulted at every turn boundary.
     A task file, a high task number, or an agent outcome marker never advances
     the roadmap by itself.
     """
-    task = next_required_task()
+    task = task_override or next_required_task()
     if task is None:
         return " The checked-in roadmap completion state has no outstanding task; do not claim completion unless it remains verified after reloading it."
     return (
@@ -1930,7 +1940,7 @@ def load_foundation_completion_state(path: Path = FOUNDATION_COMPLETION_STATE) -
             raise AppServerError(f"foundation_completion_state_invalid: invalid task id {task_id!r}")
         if task_id in seen:
             raise AppServerError(f"foundation_completion_state_invalid: duplicate task {task_id}")
-        if status not in {"COMPLETE_VERIFIED", "COMPLETE_BUT_EVIDENCE_MISSING", "PARTIAL", "NOT_STARTED", "SUPERSEDED"}:
+        if status not in {"COMPLETE_VERIFIED", "COMPLETE_BUT_EVIDENCE_MISSING", "PARTIAL", "NOT_STARTED", "SUPERSEDED", DEFERRED_PROVIDER_VERIFICATION}:
             raise AppServerError(f"foundation_completion_state_invalid: invalid status for {task_id}")
         if status == VERIFIED_COMPLETION_STATUS and not entry.get("evidence"):
             raise AppServerError(f"foundation_completion_state_invalid: {task_id} lacks durable evidence references")
@@ -1962,6 +1972,90 @@ def foundation_completion_decision(path: Path = FOUNDATION_COMPLETION_STATE) -> 
     if outstanding:
         return False, f"Foundation gate outstanding: {outstanding}"
     return True, "Foundation completion ledger verified"
+
+
+def deferred_verifications(checkpoint: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the durable provider-specific acceptance debt, never completion.
+
+    Entries are deliberately stored in the supervisor checkpoint, because they
+    are operational scheduling state.  The checked-in ledger remains the
+    authority for COMPLETE_VERIFIED and production admission.
+    """
+    entries = checkpoint.get("deferred_verifications")
+    return [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
+
+
+def safe_independent_task(checkpoint: dict[str, Any], deferred_task: str, *, path: Path = FOUNDATION_COMPLETION_STATE) -> str | None:
+    """Select the first explicitly safe task while a provider proof is parked."""
+    state = load_foundation_completion_state(path)
+    statuses = {entry["id"]: entry["status"] for entry in state["tasks"]}
+    for task_id in (entry["id"] for entry in state["tasks"]):
+        if task_id == deferred_task or statuses[task_id] == VERIFIED_COMPLETION_STATUS:
+            continue
+        dependencies = INDEPENDENT_FOUNDATION_WORK.get(task_id)
+        if dependencies is None:
+            continue
+        if all(statuses.get(dependency) == VERIFIED_COMPLETION_STATUS for dependency in dependencies):
+            return task_id
+    return None
+
+
+def park_provider_verification(
+    checkpoint: dict[str, Any], *, required_provider: str, remaining_acceptance: list[str],
+    hard_dependency_scope: str, now: float | None = None,
+) -> tuple[dict[str, Any], str | None]:
+    """Create idempotent deferred debt and choose reviewed independent work."""
+    now = time.time() if now is None else now
+    task_id = str(checkpoint.get("task") or "")
+    candidate = safe_independent_task(checkpoint, task_id)
+    if not task_id or candidate is None:
+        return checkpoint, None
+    queue = deferred_verifications(checkpoint)
+    if not any(item.get("task_id") == task_id and item.get("required_provider") == required_provider for item in queue):
+        provider = checkpoint.get(required_provider) or {}
+        queue.append({
+            "task_id": task_id,
+            "required_provider": required_provider,
+            "remaining_acceptance": list(remaining_acceptance),
+            "blocked_since": now,
+            "next_provider_probe_at": provider.get("next_availability_probe_at") or provider.get("reset_at"),
+            "hard_dependency_scope": hard_dependency_scope,
+            "resume_checkpoint": {
+                "task": task_id, "phase": checkpoint.get("phase"),
+                "compact_task_context": compact_context(checkpoint),
+            },
+        })
+    return {**checkpoint, "deferred_verifications": queue}, candidate
+
+
+def deferred_verification_ready(checkpoint: dict[str, Any], configured: set[str]) -> dict[str, Any] | None:
+    """Return the oldest ready debt item; call only at a completed turn boundary."""
+    for entry in deferred_verifications(checkpoint):
+        provider = entry.get("required_provider")
+        if provider in configured and is_agent_usable(checkpoint.get(provider, {}), True):
+            return entry
+    return None
+
+
+def complete_deferred_verification(checkpoint: dict[str, Any], task_id: str, *, path: Path = FOUNDATION_COMPLETION_STATE) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Remove debt only after the authoritative ledger says it is verified."""
+    statuses = {entry["id"]: entry["status"] for entry in load_foundation_completion_state(path)["tasks"]}
+    if statuses.get(task_id) != VERIFIED_COMPLETION_STATUS:
+        return checkpoint, None
+    queue = deferred_verifications(checkpoint)
+    completed = next((entry for entry in queue if entry.get("task_id") == task_id), None)
+    if completed is None:
+        return checkpoint, None
+    return {**checkpoint, "deferred_verifications": [entry for entry in queue if entry is not completed]}, completed
+
+
+def roadmap_completion_decision(checkpoint: dict[str, Any], *, path: Path = FOUNDATION_COMPLETION_STATE) -> tuple[bool, str]:
+    """Completion is forbidden while provider-specific acceptance debt exists."""
+    debt = deferred_verifications(checkpoint)
+    if debt:
+        return False, f"Deferred provider verification outstanding: {debt[0].get('task_id', 'unknown task')}"
+    outstanding = next_required_task(path)
+    return (outstanding is None, "Roadmap completion verified" if outstanding is None else f"Roadmap task outstanding: {outstanding}")
 
 
 class Shutdown(Exception):
@@ -2080,11 +2174,42 @@ def main() -> int:
                 if shutdown_event.is_set():
                     raise Shutdown()
 
+                # Deferred proof recovery is intentionally considered only
+                # between turns.  It never interrupts useful active work.
+                resuming_deferred = bus.data.get("resuming_deferred_verification")
+                if isinstance(resuming_deferred, dict) and active_name == resuming_deferred.get("required_provider"):
+                    resume = resuming_deferred.get("resume_checkpoint") or {}
+                    bus.update(
+                        task=resume.get("task"), phase=resume.get("phase") or "provider acceptance proof",
+                        compact_task_context=resume.get("compact_task_context") or {},
+                        active_task_override=resume.get("task"),
+                        current_action=f"Resuming deferred verification for {resume.get('task')}",
+                        event=f"Required provider {active_name.capitalize()} recovered; resuming deferred proof for {resume.get('task')}",
+                    )
+
                 # This is the restart-safe counterpart of the post-turn
                 # HANDOFF waiting branch below.  It prevents a saved HANDOFF
                 # to an exhausted Claude from being lost and replaced by an
                 # unrelated Codex turn after a supervisor restart.
                 if pending_handoff_target is not None and active_name == pending_handoff_target and not is_agent_usable(bus.data.get(active_name, {}), active_name in instances):
+                    parked, candidate = park_provider_verification(
+                        bus.data, required_provider=active_name,
+                        remaining_acceptance=list(compact_context(bus.data).get("acceptance_remaining") or ["provider-specific independent acceptance proof"]),
+                        hard_dependency_scope="Only TASK-015 and production admission require TASK-012 dual-provider verification",
+                    )
+                    if candidate is not None:
+                        bus.update(
+                            state=DEFERRED_PROVIDER_VERIFICATION, active_agent=None,
+                            deferred_verifications=parked["deferred_verifications"],
+                            task=candidate, phase="independent work while provider proof is deferred",
+                            compact_task_context={"task_id": candidate, "phase": "independent work", "acceptance_remaining": []},
+                            active_task_override=candidate,
+                            current_action=f"Working {candidate} while {active_name.capitalize()} verification is deferred",
+                            event=f"Deferred {parked['deferred_verifications'][-1]['task_id']} verification for {active_name.capitalize()}; starting safe {candidate}",
+                        )
+                        pending_handoff_target = None
+                        active_name = pick_ready_agent(bus.data, set(instances), agent_order, active_name) or preferred
+                        continue
                     waiting_state = "WAITING_FOR_AGENT_CAPACITY" if len(instances) > 1 else "WAITING_FOR_USAGE_RESET"
                     bus.update(state=waiting_state, active_agent=None, current_action="Waiting for handoff target capacity", event=f"Restoring HANDOFF to {active_name.capitalize()}; waiting for capacity")
                     while not shutdown_event.is_set():
@@ -2114,7 +2239,7 @@ def main() -> int:
 
                 prompt = args.prompt or (
                     build_continue_prompt(active_name, bus.data) if resumed and state.get("turn_count")
-                    else START_PROMPTS[active_name] + scheduled_task_instruction()
+                    else START_PROMPTS[active_name] + scheduled_task_instruction(bus.data.get("active_task_override"))
                 )
                 resume_retry_available = resumed and active_name == "claude"
                 transient_retries = 0
@@ -2246,6 +2371,24 @@ def main() -> int:
                             bus.update(state="HUMAN_GATE", human_gate=detail, current_action="Waiting for human", event=f"HUMAN_GATE: {detail}")
                             return 0
                         if kind == "COMPLETE":
+                            resuming_deferred = bus.data.get("resuming_deferred_verification")
+                            if isinstance(resuming_deferred, dict):
+                                completed_state, completed = complete_deferred_verification(
+                                    bus.data, str(resuming_deferred.get("task_id") or ""),
+                                )
+                                if completed is not None:
+                                    previous = completed.get("previous_task_checkpoint") or {}
+                                    bus.update(
+                                        deferred_verifications=completed_state["deferred_verifications"],
+                                        resuming_deferred_verification=None,
+                                        task=previous.get("task") or bus.data.get("active_task_before_deferred") or next_required_task(),
+                                        phase=previous.get("phase") or "resuming independent work",
+                                        compact_task_context=previous.get("compact_task_context") or {},
+                                        active_task_override=previous.get("task") or bus.data.get("active_task_before_deferred"),
+                                        event=f"Deferred proof for {completed['task_id']} verified; returning to parked productive work",
+                                    )
+                                    pending_handoff_target = previous.get("provider") or preferred
+                                    break
                             try:
                                 foundation_ready, foundation_message = foundation_completion_decision()
                             except AppServerError as error:
@@ -2256,7 +2399,8 @@ def main() -> int:
                                 foundation_ready=foundation_ready,
                                 scheduled_task=scheduled_foundation_task or "ROADMAP_COMPLETE",
                             )
-                            if scheduled_foundation_task:
+                            completion_allowed, completion_message = roadmap_completion_decision(bus.data)
+                            if scheduled_foundation_task or not completion_allowed:
                                 # A provider's self-reported COMPLETE is only a
                                 # turn boundary.  Until it records the required
                                 # evidence in the checked-in state, continue the
@@ -2265,7 +2409,7 @@ def main() -> int:
                                 bus.update(
                                     state="CONTINUING",
                                     current_action=f"Completion evidence required for {scheduled_foundation_task}",
-                                    event=f"Ignored unverified COMPLETE marker: {foundation_message}",
+                                    event=f"Ignored unverified COMPLETE marker: {completion_message}",
                                 )
                                 continue
                             bus.update(state="COMPLETE", current_action="Roadmap completion verified", event="Roadmap completion verified")
@@ -2287,8 +2431,29 @@ def main() -> int:
                                 f"with no assistant text and no recorded tool activity"
                             )
                         # A productive turn is the safe boundary for a
-                        # preferred-provider return. Probe only now; never
-                        # interrupt a running Claude turn.
+                        # provider-specific proof return. Probe only now;
+                        # never interrupt a running provider turn.
+                        refresh_provider_availability(bus, instances)
+                        deferred = deferred_verification_ready(bus.data, set(instances))
+                        if deferred is not None:
+                            queue = deferred_verifications(bus.data)
+                            for entry in queue:
+                                if entry.get("task_id") == deferred.get("task_id") and entry.get("required_provider") == deferred.get("required_provider"):
+                                    entry["previous_task_checkpoint"] = {
+                                        "task": bus.data.get("task"), "phase": bus.data.get("phase"),
+                                        "compact_task_context": compact_context(bus.data), "provider": active_name,
+                                    }
+                                    break
+                            pending_handoff_target = str(deferred["required_provider"])
+                            bus.update(
+                                deferred_verifications=queue,
+                                resuming_deferred_verification=deferred,
+                                active_task_before_deferred=bus.data.get("task"),
+                                event=f"Checkpointed {bus.data.get('task')} before deferred proof resumes on {pending_handoff_target.capitalize()}",
+                            )
+                            break
+                        # Preferred-provider return remains a secondary
+                        # safe-boundary optimization.
                         recovered = refresh_provider_availability(bus, instances, [preferred])
                         if should_return_to_preferred(bus.data, active_name, preferred, recovered):
                             pending_handoff_target = preferred
@@ -2331,6 +2496,24 @@ def main() -> int:
                         next_name = None
                 else:
                     next_name = pick_ready(active_name)
+                if next_name is None and pending_handoff_target is not None:
+                    parked, candidate = park_provider_verification(
+                        bus.data, required_provider=pending_handoff_target,
+                        remaining_acceptance=list(compact_context(bus.data).get("acceptance_remaining") or ["provider-specific independent acceptance proof"]),
+                        hard_dependency_scope="Only explicit semantic prerequisites remain blocked by this proof",
+                    )
+                    if candidate is not None:
+                        bus.update(
+                            state=DEFERRED_PROVIDER_VERIFICATION, active_agent=None,
+                            deferred_verifications=parked["deferred_verifications"],
+                            task=candidate, phase="independent work while provider proof is deferred",
+                            compact_task_context={"task_id": candidate, "phase": "independent work", "acceptance_remaining": []},
+                            active_task_override=candidate,
+                            current_action=f"Working {candidate} while {pending_handoff_target.capitalize()} verification is deferred",
+                            event=f"Deferred provider verification; starting safe {candidate}",
+                        )
+                        pending_handoff_target = None
+                        next_name = pick_ready(active_name)
                 if next_name is None:
                     # Neither provider usable: wait and retry instead of exiting.
                     waiting_state = "WAITING_FOR_AGENT_CAPACITY" if len(instances) > 1 else "WAITING_FOR_USAGE_RESET"

@@ -181,6 +181,64 @@ class TestRoadmapCompletionState(unittest.TestCase):
         self.assertIn(sup.PROVIDER_SELF_VALIDATION_RULE, sup.CLAUDE_START)
 
 
+class TestDeferredProviderVerification(unittest.TestCase):
+    def checkpoint(self):
+        return {
+            "task": "TASK-012", "phase": "claude-proof", "compact_task_context": {
+                "task_id": "TASK-012", "acceptance_remaining": ["Claude independent compatibility/autonomy proof"],
+            }, "claude": {"status": "USAGE_EXHAUSTED", "next_availability_probe_at": 1234.0},
+        }
+
+    def test_provider_specific_gate_is_deferred_but_remains_incomplete(self):
+        parked, candidate = sup.park_provider_verification(self.checkpoint(), required_provider="claude", remaining_acceptance=["Claude proof"], hard_dependency_scope="TASK-015")
+        self.assertEqual(candidate, "TASK-013")
+        self.assertEqual(parked["deferred_verifications"][0]["task_id"], "TASK-012")
+        self.assertEqual(sup.next_required_task(), "TASK-012")
+        self.assertFalse(sup.foundation_completion_decision()[0])
+
+    def test_safe_independent_work_proceeds_but_true_dependency_blocks(self):
+        self.assertEqual(sup.safe_independent_task(self.checkpoint(), "TASK-012"), "TASK-013")
+        self.assertNotIn("TASK-015", sup.INDEPENDENT_FOUNDATION_WORK)
+
+    def test_parking_is_idempotent_and_does_not_duplicate_evidence_work(self):
+        parked, _ = sup.park_provider_verification(self.checkpoint(), required_provider="claude", remaining_acceptance=["Claude proof"], hard_dependency_scope="TASK-015")
+        parked_again, _ = sup.park_provider_verification(parked, required_provider="claude", remaining_acceptance=["Claude proof"], hard_dependency_scope="TASK-015")
+        self.assertEqual(len(parked_again["deferred_verifications"]), 1)
+
+    def test_recovery_schedules_proof_only_at_safe_boundary(self):
+        parked, _ = sup.park_provider_verification(self.checkpoint(), required_provider="claude", remaining_acceptance=["Claude proof"], hard_dependency_scope="TASK-015")
+        parked["claude"] = {"status": "READY"}
+        ready = sup.deferred_verification_ready(parked, {"codex", "claude"})
+        self.assertEqual(ready["required_provider"], "claude")
+        self.assertEqual(ready["resume_checkpoint"]["task"], "TASK-012")
+
+    def test_provider_probe_is_not_a_task_turn(self):
+        class ProbeOK:
+            def probe_availability(self): pass
+        bus = sup.StatusBus({"claude": {"status": "USAGE_EXHAUSTED", "reset_at": time.time() - 1}})
+        with mock.patch.object(sup, "save_state", lambda value: None), mock.patch.object(sup, "log_event", lambda text: None):
+            sup.refresh_provider_availability(bus, {"claude": ProbeOK()})
+        self.assertNotIn("task_turns", bus.data.get("efficiency", {}))
+
+    def test_deferred_debt_cannot_be_removed_without_authoritative_proof(self):
+        parked, _ = sup.park_provider_verification(self.checkpoint(), required_provider="claude", remaining_acceptance=["Claude proof"], hard_dependency_scope="TASK-015")
+        unchanged, completed = sup.complete_deferred_verification(parked, "TASK-012")
+        self.assertIsNone(completed)
+        self.assertEqual(len(unchanged["deferred_verifications"]), 1)
+
+    def test_roadmap_complete_is_forbidden_while_deferred_debt_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            document = json.loads(sup.FOUNDATION_COMPLETION_STATE.read_text(encoding="utf-8"))
+            for task in document["tasks"]:
+                task["status"] = "COMPLETE_VERIFIED"; task["evidence"] = ["test"]
+            path = Path(directory) / "completion.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            checkpoint = {"deferred_verifications": [{"task_id": "TASK-012", "required_provider": "claude"}]}
+            allowed, reason = sup.roadmap_completion_decision(checkpoint, path=path)
+        self.assertFalse(allowed)
+        self.assertIn("TASK-012", reason)
+
+
 class TestCapacityWaitTelemetry(NullStatusBusIO):
     def test_local_wait_heartbeat_consumes_no_provider_turn(self):
         class ShutdownNow:

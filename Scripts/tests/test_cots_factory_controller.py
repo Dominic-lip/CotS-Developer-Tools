@@ -213,6 +213,14 @@ class TestSupervisorLifecycleMonitoring(unittest.TestCase):
             self.assertIsNone(restored["active_agent"])
             self.assertEqual(restored["claude"]["status"], "IDLE")
 
+    def test_factory_rejects_complete_when_deferred_debt_exists(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(factory, "STATE_PATH", Path(directory) / "factory.json"), mock.patch.object(factory, "SUPERVISOR_STATE", Path(directory) / "supervisor.json"):
+            factory.SUPERVISOR_STATE.write_text(json.dumps({"state": "COMPLETE", "deferred_verifications": [{"task_id": "TASK-012"}]}), encoding="utf-8")
+            controller = factory.FactoryController()
+            with mock.patch.object(factory, "authoritative_next_required_task", return_value=None), mock.patch.object(controller, "start_supervisor"):
+                self.assertTrue(controller.handle_gate(0))
+            self.assertNotEqual(controller.state["factory"], "COMPLETE")
+
 
 class TestHostDisconnectNoise(unittest.TestCase):
     def test_loopback_connection_reset_is_logged_without_traceback(self):
@@ -276,6 +284,19 @@ class TestFactoryDashboard(unittest.TestCase):
         rendered = dashboard.render_frame(snapshot, width=100)
         self.assertIn("Efficiency", rendered)
         self.assertIn("Targeted tests 5", rendered)
+
+    def test_deferred_provider_verification_is_visible_while_productive_work_continues(self):
+        snapshot = self.snapshot()
+        snapshot["supervisor"].update({
+            "task": "TASK-013", "active_agent": "codex", "state": "RUNNING_CODEX",
+            "claude": {"status": "USAGE_EXHAUSTED", "next_availability_probe_at": time.time() + 60},
+            "deferred_verifications": [{"task_id": "TASK-012", "required_provider": "claude", "remaining_acceptance": ["independent proof"], "next_provider_probe_at": time.time() + 60}],
+        })
+        rendered = dashboard.render_frame(snapshot, width=110)
+        self.assertIn("Deferred Verification", rendered)
+        self.assertIn("TASK-012 -> CLAUDE", rendered)
+        self.assertIn("Blocking current work: NO", rendered)
+        self.assertIn("Task TASK-013", rendered)
 
     def test_events_are_human_safe_and_bounded(self):
         rendered = dashboard.render_frame(self.snapshot(recent_events=["\x1b[31m{\"jsonrpc\":\"2.0\"}\nRaw" for _ in range(20)]), width=90)

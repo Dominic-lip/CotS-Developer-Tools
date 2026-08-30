@@ -461,13 +461,15 @@ class FactoryController:
                 self._exit_code = HUMAN_REQUIRED_EXIT
                 return False
             self.mark_supervisor_stopped(checkpoint)
-            if outstanding is None:
+            deferred = checkpoint.get("deferred_verifications") or []
+            if outstanding is None and not deferred:
                 self.save("Roadmap completion verified", factory="COMPLETE", supervisor_state="STOPPED")
                 return False
             # A bounded repair/test process or agent prose cannot advance the
             # roadmap.  Restart the normal scheduler against the preserved
             # checkpoint so its task/phase/handoff/context remain intact.
-            self.save(f"Rejected false completion; scheduling {outstanding}", factory="RUNNING", supervisor_state="RESTARTING")
+            reason = f"deferred verification {deferred[0].get('task_id', 'unknown')}" if deferred else f"scheduling {outstanding}"
+            self.save(f"Rejected false completion; {reason}", factory="RUNNING", supervisor_state="RESTARTING")
             self._normal_restart_requested = True
             self.start_supervisor()
             return True

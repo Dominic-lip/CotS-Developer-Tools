@@ -75,6 +75,27 @@ at once.
 
 An elapsed `reset_at` is a probe cue, not assumed capacity. At safe completed-turn boundaries the supervisor marks that provider `ELIGIBLE_FOR_PROBE`, makes one bounded harmless real-turn probe, and records `PROBING_AVAILABILITY` then either `READY` (clearing stale reset/error data) or a newly observed exhausted/stalled response. When a productive non-preferred turn ends and recovered Codex is ready, it checkpoints, deactivates the current provider, and returns to Codex automatically. Agents that need a specific provider use `SUPERVISOR_OUTCOME: HANDOFF` plus `SUPERVISOR_TARGET_AGENT` and `SUPERVISOR_HANDOFF_REASON`; the supervisor waits/rechecks that target instead of converting capacity into a human decision. Provider-bound `HUMAN_GATE` messages are similarly converted to recovery, while genuine human choices and authentication gates remain terminal human gates.
 
+### Deferred provider verification and safe work-stealing
+
+`DEFERRED_PROVIDER_VERIFICATION` is an operational checkpoint state, never a
+completion state. When a task has implementation/evidence sufficient for
+permitted independent work but still needs an explicitly provider-specific
+acceptance proof from an unavailable provider, the supervisor records durable
+debt in `deferred_verifications`: task id, required provider, remaining
+acceptance, blocked time, next probe, hard dependency scope, and the compact
+resume checkpoint. The checked-in completion ledger remains non-verified, so
+the roadmap and production gate continue to fail closed.
+
+The scheduler may work-steal only from the reviewed
+`INDEPENDENT_FOUNDATION_WORK` eligibility table. TASK-012's missing Claude
+independent ToolLab proof permits TASK-013 and TASK-014, but does not permit
+TASK-015 (which explicitly requires the dual-provider proof) or production.
+Availability probes remain local/scheduled and do not increment task turns.
+When the provider recovers, the active safe task is checkpointed at its next
+completed turn boundary, the proof resumes from its existing compact evidence,
+and, after the ledger records `COMPLETE_VERIFIED`, the prior productive task
+resumes. A probe never preempts a live turn.
+
 `Scripts\Launch-CotS-Agents.bat` opens one visible window (`cmd /k`, not
 minimized) so an operator can read supervisor state without inspecting
 PowerShell output or the checkpoint JSON directly. Ctrl+C requests a

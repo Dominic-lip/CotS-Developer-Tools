@@ -106,6 +106,7 @@ def render_lines(snapshot: dict[str, Any], spinner_index: int = 0, width: int | 
     active_is_real = str(checkpoint.get("state", "")).startswith("RUNNING_") and checkpoint.get("active_agent")
     active_label = str(active).upper() if active_is_real else "NONE"
     events = list(snapshot.get("recent_events") or checkpoint.get("recent_events") or [])[-MAX_EVENTS:]
+    deferred = [item for item in (checkpoint.get("deferred_verifications") or []) if isinstance(item, dict)]
 
     lines = [top("CotS Autonomous Factory")]
     lines += [
@@ -126,6 +127,18 @@ def render_lines(snapshot: dict[str, Any], spinner_index: int = 0, width: int | 
         row(_agent_line("Codex", checkpoint.get("codex") or {}, inner)),
         row(_agent_line("Claude", checkpoint.get("claude") or {}, inner)),
         bottom,
+    ]
+    if deferred:
+        lines += [top("Deferred Verification")]
+        for item in deferred[:3]:
+            provider = str(item.get("required_provider") or "unknown").upper()
+            proof = ", ".join(str(value) for value in item.get("remaining_acceptance", [])[:1]) or "provider acceptance proof"
+            probe_at = item.get("next_provider_probe_at")
+            probe = time.strftime("%H:%M:%S", time.localtime(probe_at)) if isinstance(probe_at, (int, float)) else "scheduled"
+            lines.append(row(f"{item.get('task_id', '?')} -> {provider} {proof}"))
+            lines.append(row(f"{provider}: {(checkpoint.get(str(item.get('required_provider')), {}) or {}).get('status', 'UNKNOWN')}    Next probe: {probe}    Blocking current work: NO"))
+        lines += [bottom]
+    lines += [
         top("Efficiency"),
         row(f"Task turns {((checkpoint.get('efficiency') or {}).get('task_turns', checkpoint.get('turn_count', 0)))}    New reads {((checkpoint.get('efficiency') or {}).get('files_newly_read_this_turn', 0))}    Unchanged rereads {((checkpoint.get('efficiency') or {}).get('files_reread_unchanged', 0))}"),
         row(f"Targeted tests {((checkpoint.get('efficiency') or {}).get('targeted_test_runs', 0))}    Full suites {((checkpoint.get('efficiency') or {}).get('full_suite_runs', 0))}    Repeated failures {((checkpoint.get('efficiency') or {}).get('repeated_failure_count', 0))}"),
