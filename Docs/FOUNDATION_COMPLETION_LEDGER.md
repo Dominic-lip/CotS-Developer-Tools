@@ -1,0 +1,37 @@
+# Foundation Completion Ledger
+
+Reconciled: 2026-08-30. This is the authority for TASK-000 through TASK-016;
+the machine-readable scheduler input is `Docs/FOUNDATION_COMPLETION_STATE.json`.
+`COMPLETE_VERIFIED` means the stated acceptance evidence is committed and
+inspectable. `COMPLETE_BUT_EVIDENCE_MISSING` preserves the implementation but
+blocks advancement until the missing acceptance evidence is recorded. `PARTIAL`
+and `NOT_STARTED` also block advancement. No status is inferred from a task
+file, an agent's outcome marker, or a later task number.
+
+| Task | Status | Acceptance criteria | Implementation / commit evidence | Test / live Unreal evidence | Missing work and further execution |
+| --- | --- | --- | --- | --- | --- |
+| TASK-000 | COMPLETE_VERIFIED | Explicit, non-conflicting boundaries and agent-neutral/no-destructive rules. | `e9f3a61`; `AGENTS.md`, `Docs/ARCHITECTURE.md`, task/spec templates. | Repository policies are the durable deliverable; no runtime proof applies. | None. |
+| TASK-001 | COMPLETE_BUT_EVIDENCE_MISSING | Both CLIs consume one task from intended working directory. | `e9f3a61`, `396a5cc`, `e4ed798`; `Scripts/Run-CotSTask.ps1`. | No committed Codex and Claude dry-run plus harmless-read transcript. | Re-run/record both client proofs only; retain runner. |
+| TASK-002 | COMPLETE_BUT_EVIDENCE_MISSING | Clean Tool Lab editor build/startup and initial console reads. | `e9f3a61`, `4a7fe48`, `9dcd722`; ToolLab project/plugin/baseline scripts. | Built binaries exist locally, but canonical successful build/startup output is not committed. | Record canonical build and editor/status/asset/valid-invalid inspection evidence. |
+| TASK-003 | PARTIAL | Codex and Claude independently inspect the same native Unreal MCP editor. | `e9f3a61`; current root and ToolLab MCP endpoint configuration. | `Docs/MCP_CAPABILITY_MATRIX.md` records Codex access and explicitly says Claude's native configuration/read repeat was unverified. | Complete Claude independent connection/read proof. |
+| TASK-004 | PARTIAL | Matrix grounded in real calls, including standby critical-read compatibility sample. | `9305a79`, `e4763c2`; `Docs/MCP_CAPABILITY_MATRIX.md`. | Codex calls, mutation/readback and cleanup are detailed; Claude repeat is explicitly pending. | Run/record the narrow Claude critical-read sample; do not repeat the whole audit. |
+| TASK-005 | COMPLETE_BUT_EVIDENCE_MISSING | Stable editor-only plugin base, clean build/startup and plugin automation test. | `d80f82f`; result core, domain interfaces, foundation test. | Source/binaries show implementation, not a committed canonical build/startup/test result. | Revalidate only and record output. |
+| TASK-006 | COMPLETE_BUT_EVIDENCE_MISSING | Exact asset/dependency/animation/duplicate-name inspection without clicking. | `2ebfab0`; `CotSInspectionToolset`. | Source tests exist, but no committed ambiguous-asset live proof. | Execute/record the disposable duplicate-name proof. |
+| TASK-007 | COMPLETE_VERIFIED | One harmless novel inspection through an auditable development-only bridge. | `a9d1d94`; `CotSExecutionToolset`, `Docs/EXECUTION_BRIDGE.md`. | The document records the source audit and constrained live-proof behaviour. | None. |
+| TASK-008 | COMPLETE_BUT_EVIDENCE_MISSING | Guarded mutation primitives plus independent reinspection in a disposable namespace. | `b44a203`; `CotSMutationToolset`, plugin tests. | No committed end-to-end disposable mutation/reinspection transcript. | Record acceptance proof; preserve primitives. |
+| TASK-008A | PARTIAL | Lock/open/close/build/test/reopen/read lifecycle proof. | `4127983`; Host MCP and lifecycle toolset. | Lifecycle code exists; no complete durable lifecycle proof is present. | Execute/record the specified lifecycle proof only. |
+| TASK-008B | COMPLETE_BUT_EVIDENCE_MISSING | Durable, leased Codex continuation supervisor. | `e9b3732`; supervisor, launcher and checkpoint/lease implementation. | Unit coverage is present; no committed live restart/continuation proof. | Record live harmless continuation/restart proof. |
+| TASK-008C | COMPLETE_VERIFIED | Dashboard, provider rotation and single-mutator boundary. | `ba71b42`, `02590ab`, `8ecf9f5`, `85187f0`, `700d648`, `aca1869`. | Deterministic tests and captured Claude/Codex protocol fixtures document the acceptance behaviour. | None. |
+| TASK-009 | COMPLETE_VERIFIED | Detect a disposable validation failure, repair it and prove clean result. | `51fdfef`; `CotSValidationToolset`. | `Docs/VALIDATION_DIAGNOSTICS.md` records missing CurveFloat -> create -> validate -> delete evidence. | None. |
+| TASK-010 | COMPLETE_BUT_EVIDENCE_MISSING | Deterministic Tool Lab test launches, observes runtime state, stops, returns pass/fail. | Native PIE/Automation coverage recorded in `e4763c2`; runtime readers added in `5bb14ed`, `028b81d`. | TASK-012 gives one Codex runtime proof, but no standalone deterministic test pass/fail artifact. | Record deterministic Tool Lab test evidence; retain readers. |
+| TASK-011 | COMPLETE_BUT_EVIDENCE_MISSING | A Tool Lab mutation produces a reviewable before/after report. | `e9b3732`; `Scripts/CotS-GitCompletion.py` and supervisor restrictions. | No committed sample before/after change report. | Produce/record sample report without destructive Git work. |
+| TASK-012 | PARTIAL | Identical autonomous Blueprint/map/PIE proof once each by Codex and Claude. | `5bb14ed`, `028b81d`; Codex proof assets `/Game/CotSAutonomousProof/BP_CodexProofActor` and `Maps/M_CodexProof`. | Committed Codex live proof only. No Claude proof asset, log, report or commit was found. | Run/record an independent Claude proof; do not redo Codex. |
+| TASK-013 | NOT_STARTED | Full MetaHuman-compatible locomotion authoring and test (retarget, Blend Space, AnimBP/state machine, policy, validation). | Only empty Animation/MetaHuman domain interfaces from TASK-005 exist. | No animation assets, toolset, locomotion test or acceptance report found. | Implement the task after prerequisites; no donor mutation. |
+| TASK-014 | NOT_STARTED | Classified Shardlands inventory with dependencies and confidence. | No audit report/tool commit found. | No report exists; Shardlands was inspected read-only only for this reconciliation. | Create the report in this repository; do not mutate Shardlands. |
+| TASK-015 | NOT_STARTED | Clean UE 5.8 production project/baseline with client/editor build and bootstrap architecture. | No tracked bootstrap output; `C:\Dev\CotS` contains no project files and is not a Git worktree. | Its hard prerequisites TASK-012 dual proof and TASK-014 audit are not met. | Do not begin until prerequisites are verified. |
+| TASK-016 | PARTIAL | Both adapters, in one session, use Host + native Unreal MCP and prove lock contention/read-only connectivity. | `4748427`, `585dfee`, `04b3819`; symmetric endpoint wiring and Host protocol fixes. | Unit test covers Claude tool allowlist; no durable two-adapter live session/lock-contention proof found. | Run/record the required independent adapter validation; preserve wiring. |
+
+`SUPERSEDED` is not used: every original foundation task remains a dependency
+or a preserved capability. Production TASK-100 through TASK-115 are present in
+the machine-readable state as `NOT_STARTED` so a verified foundation cannot be
+mistaken for a completed roadmap.

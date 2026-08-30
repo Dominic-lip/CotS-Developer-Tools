@@ -155,6 +155,26 @@ class NullStatusBusIO(unittest.TestCase):
         self.addCleanup(self._log_event_patch.stop)
 
 
+class TestRoadmapCompletionState(unittest.TestCase):
+    def test_checked_in_state_schedules_earliest_unverified_foundation_task(self):
+        self.assertEqual(sup.next_required_task(), "TASK-001")
+        verified, reason = sup.foundation_completion_decision()
+        self.assertFalse(verified)
+        self.assertEqual(reason, "Foundation gate outstanding: TASK-001")
+
+    def test_malformed_or_incomplete_state_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            state_path.write_text('{"tasks": []}', encoding="utf-8")
+            with self.assertRaises(sup.AppServerError):
+                sup.load_foundation_completion_state(state_path)
+
+    def test_unverified_complete_marker_has_a_scheduler_instruction(self):
+        instruction = sup.scheduled_task_instruction()
+        self.assertIn("TASK-001", instruction)
+        self.assertIn("durable evidence", instruction)
+
+
 # ---------------------------------------------------------------------------
 # 1. Codex usageLimitExceeded classification against the ACTUAL captured
 #    protocol (.cots/codex-protocol.log, excerpted into a fixture).

@@ -17,8 +17,12 @@ Typical agent sequence: acquire a stable agent ID, close ToolLab, build, run tes
 `Scripts\Launch-CotS-Agents.bat` starts `CotSAgentSupervisor.py` by default;
 pass `manual` only for an intentionally interactive Codex CLI. The supervisor
 owns Codex App Server, stores a durable thread/checkpoint in `.cots`, and sends
-the required continuation prompt after each completed turn. It stops only for a
-structured human gate, completion, failure, or usage-reset state.
+the required continuation prompt after each completed turn. A provider's
+`SUPERVISOR_OUTCOME: COMPLETE` is only a turn boundary: the supervisor reloads
+`Docs/FOUNDATION_COMPLETION_STATE.json`, continues the earliest task whose
+status is not `COMPLETE_VERIFIED`, and stops for roadmap completion only when
+the checked-in state has durable evidence for every roadmap task. It otherwise
+stops only for a structured human gate, failure, or usage-reset state.
 
 It uses App Server's `auto_review` approval reviewer with granular approval
 settings. Routine workspace work does not wait for a human approval; permission

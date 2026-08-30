@@ -2,7 +2,7 @@
 
 ## Phase 1 — Autonomous Unreal Development Factory — COMPLETE
 
-`TASK-000` through `TASK-016` established and proved the agent-neutral UE 5.8 development factory: Tool Lab, native MCP audit, inspection/mutation/validation/testing, autonomous lifecycle, persistent Codex/Claude supervision, provider failover, MetaHuman/animation tooling, Shardlands donor inspection, production bootstrap and dual-agent MCP parity.
+The historical "complete" claim for `TASK-000` through `TASK-016` is superseded by the evidence-backed status in `Docs/FOUNDATION_COMPLETION_LEDGER.md` and `Docs/FOUNDATION_COMPLETION_STATE.json`. Production may not start until every foundation gate is `COMPLETE_VERIFIED`.
 
 The historical milestone structure remains:
 

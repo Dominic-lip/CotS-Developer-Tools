@@ -39,6 +39,9 @@ CODEX_PROTOCOL_LOG = COTS_DIR / "codex-protocol.log"
 CLAUDE_PROTOCOL_LOG = COTS_DIR / "claude-protocol.log"
 EVENTS_LOG = COTS_DIR / "supervisor-events.log"
 LEASE = COTS_DIR / "agent-supervisor-lease.local.lock"
+FOUNDATION_COMPLETION_STATE = REPO / "Docs" / "FOUNDATION_COMPLETION_STATE.json"
+FOUNDATION_TASK_PREFIX = "TASK-0"
+VERIFIED_COMPLETION_STATUS = "COMPLETE_VERIFIED"
 
 TURN_TIMEOUT_SECONDS = 2 * 60 * 60
 UPDATE_TIMEOUT_SECONDS = 120
@@ -194,6 +197,22 @@ repository and checkpoint state. Reconcile actual state first.{checkpoint_facts}
 active task or next incomplete task. """ + MARKER_INSTRUCTIONS
 
 
+def scheduled_task_instruction() -> str:
+    """Return the one durable task-selection fact the providers may trust.
+
+    The checked-in ledger is deliberately consulted at every turn boundary.
+    A task file, a high task number, or an agent outcome marker never advances
+    the roadmap by itself.
+    """
+    task = next_required_task()
+    if task is None:
+        return " The checked-in roadmap completion state has no outstanding task; do not claim completion unless it remains verified after reloading it."
+    return (
+        f" The checked-in roadmap completion state schedules {task}. Work only on that task's "
+        "remaining acceptance evidence/work, then update the ledger with durable evidence."
+    )
+
+
 def build_continue_prompt(name: str, state: dict[str, Any]) -> str:
     """Inject factual repository/checkpoint state into the continuation
     prompt (TASK-008C fix): the handoff between providers must be grounded
@@ -215,7 +234,7 @@ def build_continue_prompt(name: str, state: dict[str, Any]) -> str:
         f"repository state before trusting it."
     ) if facts else ""
     template = CODEX_CONTINUE_TEMPLATE if name == "codex" else CLAUDE_CONTINUE_TEMPLATE
-    return template.format(checkpoint_facts=checkpoint_facts)
+    return template.format(checkpoint_facts=checkpoint_facts + scheduled_task_instruction())
 
 CLAUDE_ALLOWED_TOOLS = (
     "Read Edit Write Grep Glob "
@@ -1696,6 +1715,63 @@ def record_turn_and_check_stall(stall_streak: dict[str, int], name: str, result:
     return stall_streak[name] >= STALL_THRESHOLD
 
 
+def load_foundation_completion_state(path: Path = FOUNDATION_COMPLETION_STATE) -> dict[str, Any]:
+    """Load and validate the checked-in foundation completion state.
+
+    This is intentionally fail-closed: an absent, malformed, or duplicate
+    foundation task record is a scheduling error, never a reason to advance to
+    production.  Evidence references are durable repository paths/commit IDs
+    recorded in the companion Markdown ledger.
+    """
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise AppServerError(f"foundation_completion_state_invalid: {error}") from error
+    tasks = document.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise AppServerError("foundation_completion_state_invalid: tasks must be a non-empty list")
+    seen: set[str] = set()
+    for entry in tasks:
+        task_id = entry.get("id") if isinstance(entry, dict) else None
+        status = entry.get("status") if isinstance(entry, dict) else None
+        if not isinstance(task_id, str) or not re.fullmatch(r"TASK-(?:0(?:0[0-9]|1[0-6]|08[A-C])|1(?:0[0-9]|1[0-5]))", task_id):
+            raise AppServerError(f"foundation_completion_state_invalid: invalid task id {task_id!r}")
+        if task_id in seen:
+            raise AppServerError(f"foundation_completion_state_invalid: duplicate task {task_id}")
+        if status not in {"COMPLETE_VERIFIED", "COMPLETE_BUT_EVIDENCE_MISSING", "PARTIAL", "NOT_STARTED", "SUPERSEDED"}:
+            raise AppServerError(f"foundation_completion_state_invalid: invalid status for {task_id}")
+        if status == VERIFIED_COMPLETION_STATUS and not entry.get("evidence"):
+            raise AppServerError(f"foundation_completion_state_invalid: {task_id} lacks durable evidence references")
+        seen.add(task_id)
+    expected = (
+        {f"TASK-{number:03d}" for number in range(9)}
+        | {"TASK-008A", "TASK-008B", "TASK-008C"}
+        | {f"TASK-{number:03d}" for number in range(9, 17)}
+        | {f"TASK-{number}" for number in range(100, 116)}
+    )
+    if seen != expected:
+        raise AppServerError("foundation_completion_state_invalid: foundation and production roadmap task records are required")
+    return document
+
+
+def next_required_task(path: Path = FOUNDATION_COMPLETION_STATE) -> str | None:
+    """Return the earliest roadmap task not proven by durable evidence."""
+    state = load_foundation_completion_state(path)
+    for entry in state["tasks"]:
+        if entry["status"] != VERIFIED_COMPLETION_STATUS:
+            return entry["id"]
+    return None
+
+
+def foundation_completion_decision(path: Path = FOUNDATION_COMPLETION_STATE) -> tuple[bool, str]:
+    """State the only condition under which the supervisor may enter TASK-100."""
+    state = load_foundation_completion_state(path)
+    outstanding = next((entry["id"] for entry in state["tasks"] if entry["id"].startswith(FOUNDATION_TASK_PREFIX) and entry["status"] != VERIFIED_COMPLETION_STATUS), None)
+    if outstanding:
+        return False, f"Foundation gate outstanding: {outstanding}"
+    return True, "Foundation completion ledger verified"
+
+
 class Shutdown(Exception):
     pass
 
@@ -1746,6 +1822,17 @@ def main() -> int:
         restart_handoff_target = restored_handoff_target(state, set(agent_order))
         bus = StatusBus(state)
         bus.update(state="PREFLIGHT", current_action="Checking installed agent versions", event="Supervisor startup")
+        try:
+            foundation_ready, foundation_message = foundation_completion_decision()
+        except AppServerError as error:
+            bus.update(state="FAILED", current_action="Completion-state validation failed", event=str(error))
+            return 2
+        scheduled_foundation_task = next_required_task()
+        bus.update(
+            foundation_ready=foundation_ready,
+            scheduled_task=scheduled_foundation_task or "ROADMAP_COMPLETE",
+            event=foundation_message,
+        )
 
         if args.update and "codex" in agent_order:
             bus.update(current_action="Updating Codex", event="Running codex update")
@@ -1834,7 +1921,8 @@ def main() -> int:
                 bus.update(event=ADAPTER_READY_EVENTS.get(active_name, f"{active_name.capitalize()} ready"))
 
                 prompt = args.prompt or (
-                    build_continue_prompt(active_name, bus.data) if resumed and state.get("turn_count") else START_PROMPTS[active_name]
+                    build_continue_prompt(active_name, bus.data) if resumed and state.get("turn_count")
+                    else START_PROMPTS[active_name] + scheduled_task_instruction()
                 )
                 resume_retry_available = resumed and active_name == "claude"
                 transient_retries = 0
@@ -1929,8 +2017,33 @@ def main() -> int:
                                 break
                             bus.update(state="HUMAN_GATE", human_gate=detail, current_action="Waiting for human", event=f"HUMAN_GATE: {detail}")
                             return 0
-                        if kind == "COMPLETE" or (args.max_turns and state["turn_count"] >= args.max_turns):
-                            bus.update(state="COMPLETE", current_action="Roadmap complete", event="Roadmap complete")
+                        if kind == "COMPLETE":
+                            try:
+                                foundation_ready, foundation_message = foundation_completion_decision()
+                            except AppServerError as error:
+                                bus.update(state="FAILED", event=str(error))
+                                return 2
+                            scheduled_foundation_task = next_required_task()
+                            bus.update(
+                                foundation_ready=foundation_ready,
+                                scheduled_task=scheduled_foundation_task or "ROADMAP_COMPLETE",
+                            )
+                            if scheduled_foundation_task:
+                                # A provider's self-reported COMPLETE is only a
+                                # turn boundary.  Until it records the required
+                                # evidence in the checked-in state, continue the
+                                # earliest outstanding prerequisite.
+                                prompt = build_continue_prompt(active_name, bus.data)
+                                bus.update(
+                                    state="CONTINUING",
+                                    current_action=f"Completion evidence required for {scheduled_foundation_task}",
+                                    event=f"Ignored unverified COMPLETE marker: {foundation_message}",
+                                )
+                                continue
+                            bus.update(state="COMPLETE", current_action="Roadmap completion verified", event="Roadmap completion verified")
+                            return 0
+                        if args.max_turns and state["turn_count"] >= args.max_turns:
+                            bus.update(state="COMPLETE", current_action="Test turn limit reached", event="Test turn limit reached")
                             return 0
                         # Hot-loop circuit breaker: a real turn that did meaningful
                         # work (assistant text and/or recorded tool/item activity)
