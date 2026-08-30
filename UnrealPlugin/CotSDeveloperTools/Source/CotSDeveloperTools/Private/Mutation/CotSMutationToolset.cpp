@@ -7,6 +7,8 @@
 #include "Animation/AnimSequence.h"
 #include "AnimationGraph.h"
 #include "AnimGraphNode_StateMachine.h"
+#include "AnimGraphNode_SequencePlayer.h"
+#include "AnimGraphNode_StateResult.h"
 #include "AnimStateEntryNode.h"
 #include "AnimStateNode.h"
 #include "AnimStateTransitionNode.h"
@@ -500,6 +502,71 @@ FString UCotSMutationToolset::AddDisposableAnimBlueprintTransition(const FString
     Result.Data->SetBoolField(TEXT("connected"), Transition->GetPreviousState() == SourceState && Transition->GetNextState() == TargetState);
     Result.Validation.Add(TEXT("inspect with CotS.Inspection.GetAnimBlueprintStateMachines before adding rule logic"));
     return Finish(Result, true, false, TEXT("Transition authoring is graph-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::SetDisposableAnimBlueprintStateSequence(const FString& ObjectPath, const FString& StateName, const FString& AnimationPath, bool bLooping, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.SetDisposableAnimBlueprintStateSequence");
+    if (!IsDisposableAssetPath(ObjectPath)) { return FCotSOperationResult::Fail(Op, TEXT("outside_disposable_scope"), TEXT("State content authoring is restricted to /Game/CotSMutationLive/ exact object paths."), bDryRun).ToJson(); }
+    UAnimBlueprint* Blueprint = Cast<UAnimBlueprint>(LoadExactAsset(ObjectPath));
+    UAnimSequence* Animation = Cast<UAnimSequence>(LoadExactAsset(AnimationPath));
+    if (!Blueprint || !Animation || !Blueprint->TargetSkeleton || Animation->GetSkeleton() != Blueprint->TargetSkeleton)
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("invalid_animblueprint_or_sequence"), TEXT("ObjectPath must resolve to a target-Skeleton AnimBlueprint and AnimationPath to an exact-skeleton UAnimSequence."), bDryRun).ToJson();
+    }
+    UAnimStateNode* State = nullptr;
+    for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+    {
+        TArray<UAnimGraphNode_Base*> Machines;
+        if (UAnimationGraph* AnimGraph = Cast<UAnimationGraph>(Graph)) { AnimGraph->GetGraphNodesOfClass(UAnimGraphNode_StateMachine::StaticClass(), Machines, true); }
+        for (UAnimGraphNode_Base* Node : Machines)
+        {
+            if (UAnimGraphNode_StateMachine* Machine = Cast<UAnimGraphNode_StateMachine>(Node))
+            {
+                TArray<UAnimStateNode*> States;
+                if (Machine->EditorStateMachineGraph) { Machine->EditorStateMachineGraph->GetNodesOfClass(States); }
+                for (UAnimStateNode* Candidate : States) { if (Candidate && Candidate->GetStateName().Equals(StateName, ESearchCase::CaseSensitive)) { State = Candidate; break; } }
+            }
+            if (State) { break; }
+        }
+        if (State) { break; }
+    }
+    if (!State || !State->BoundGraph) { return FCotSOperationResult::Fail(Op, TEXT("state_not_found"), TEXT("StateName must resolve to a State with an initialized animation graph."), bDryRun).ToJson(); }
+    UAnimGraphNode_StateResult* ResultNode = State->GetResultNodeInsideState();
+    if (!ResultNode) { return FCotSOperationResult::Fail(Op, TEXT("state_result_not_found"), TEXT("The State graph has no result node."), bDryRun).ToJson(); }
+    TArray<UAnimGraphNode_SequencePlayer*> ExistingPlayers;
+    State->BoundGraph->GetNodesOfClass(ExistingPlayers);
+    if (ExistingPlayers.Num() > 0)
+    {
+        if (ExistingPlayers.Num() == 1 && ExistingPlayers[0]->GetAnimationAsset() == Animation && ExistingPlayers[0]->Node.IsLooping() == bLooping)
+        {
+            FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath, AnimationPath);
+            Result.Validation.Add(TEXT("already_contains_requested_sequence_player"));
+            return Finish(Result, false, false, TEXT("State content authoring is graph-backed and not transaction-backed."));
+        }
+        return FCotSOperationResult::Fail(Op, TEXT("state_content_already_exists"), TEXT("The State already contains a different sequence player; replace/remove is intentionally explicit."), bDryRun).ToJson();
+    }
+    FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath, AnimationPath);
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("state_graph"), State->BoundGraph->GetPathName());
+    Result.Data->SetStringField(TEXT("animation"), AnimationPath);
+    Result.Data->SetBoolField(TEXT("looping"), bLooping);
+    if (bDryRun) { Result.Validation.Add(TEXT("validated_exact_skeleton_sequence_player_creation")); return Finish(Result, true, false, TEXT("State content authoring is graph-backed and not transaction-backed.")); }
+    Blueprint->Modify();
+    State->BoundGraph->Modify();
+    FGraphNodeCreator<UAnimGraphNode_SequencePlayer> PlayerCreator(*State->BoundGraph);
+    UAnimGraphNode_SequencePlayer* Player = PlayerCreator.CreateNode(false);
+    Player->SetAnimationAsset(Animation);
+    Player->Node.SetLoopAnimation(bLooping);
+    PlayerCreator.Finalize();
+    UEdGraphPin* PoseOutput = Player->FindPinChecked(TEXT("Pose"), EGPD_Output);
+    UEdGraphPin* ResultInput = ResultNode->FindPinChecked(TEXT("Result"), EGPD_Input);
+    PoseOutput->MakeLinkTo(ResultInput);
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    Result.Data->SetStringField(TEXT("sequence_player"), Player->GetPathName());
+    Result.Data->SetBoolField(TEXT("result_wired"), PoseOutput->LinkedTo.Contains(ResultInput));
+    Result.Validation.Add(TEXT("inspect State Machine before AnimGraph output wiring or compilation"));
+    return Finish(Result, true, false, TEXT("State content authoring is graph-backed and not transaction-backed."));
 }
 
 FString UCotSMutationToolset::AddLocomotionBlendSpaceSample(const FString& BlendSpacePath, const FString& AnimationPath, double Speed, double Direction, bool bDryRun)

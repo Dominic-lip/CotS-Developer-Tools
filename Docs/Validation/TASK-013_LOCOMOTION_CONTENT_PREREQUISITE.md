@@ -329,6 +329,26 @@ Host `RunCotSAutomation` operation `1027b7ed-c40b-49da-8fa2-52b76aa83275`
 returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
 CODE: 0`. The Host lock was released under `supervisor-task-013`.
 
+## Thirteenth increment: guarded State Sequence Player authoring
+
+`UCotSMutationToolset::SetDisposableAnimBlueprintStateSequence` assigns one
+exact-skeleton `UAnimSequence` to a named State in a disposable AnimBlueprint.
+It uses UE 5.8's public `UAnimGraphNode_SequencePlayer` lifecycle, explicitly
+sets the requested looping policy, and links the public `Pose` output to the
+State Result's `Result` input using the same engine graph pattern. Existing
+matching content is an idempotent no-change result; different State content is
+refused rather than implicitly replaced. The structured result reports exact
+State, sequence-player, and result-wiring information.
+
+This does not wire the State Machine into the AnimGraph output, create a
+transition-rule expression, compile, or save. The focused test proves a
+missing disposable AnimBlueprint is rejected before State content mutation.
+
+Canonical `Build-ToolLab.cmd` succeeded (`Result: Succeeded`, exit 0). Fixed
+Host `RunCotSAutomation` operation `6cf663bf-1d0f-47a0-8b03-980e7b44d670`
+returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
+CODE: 0`. The Host lock was released under `supervisor-task-013`.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
@@ -337,8 +357,8 @@ CODE: 0`. The Host lock was released under `supervisor-task-013`.
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof; provide a valid
   exact-skeleton preview mesh and create/inspect/clean up the guarded Blend
-  Space; add animation-asset nodes and transition rule logic to a created
-  AnimBP, wire the AnimGraph output, compile and inspect it; apply the
+  Space; add transition rule logic to a created AnimBP, wire the AnimGraph
+  output, compile and inspect it; apply the
   root-motion/IK policy to the complete locomotion set and run its test,
   AnimBP/state-machine create/configure, root-motion/IK policy checks,
   locomotion validation and test running. (Skeleton compatibility inspection

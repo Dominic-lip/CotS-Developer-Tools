@@ -18,7 +18,7 @@
     {"id":"TASK-010","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-010_AUTOMATED_TESTING.md: deterministic launch/observe/terminate/pass-fail proof reused from the TASK-008A RunCotSAutomation run"]},
     {"id":"TASK-011","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-011_CHANGE_GUARDRAILS.md: reviewable guarded ToolLab mutation before/after report"]},
     {"id":"TASK-012","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-012_CLAUDE_AUTONOMOUS_PROOF.md: independent Claude Blueprint/map/PIE autonomous proof matching Codex's existing proof"]},
-    {"id":"TASK-013","status":"PARTIAL","evidence":["Docs/Validation/TASK-013_LOCOMOTION_CONTENT_PREREQUISITE.md: native skeleton and IK Retargeter inspection, clip-policy metadata, guarded batch-retarget and Blend Space authoring, root-motion/IK policy, AnimBlueprint state-machine inspection, guarded AnimBlueprint factory preflight, and guarded State Machine/State/transition creation"]},
+    {"id":"TASK-013","status":"PARTIAL","evidence":["Docs/Validation/TASK-013_LOCOMOTION_CONTENT_PREREQUISITE.md: native skeleton and IK Retargeter inspection, clip-policy metadata, guarded batch-retarget and Blend Space authoring, root-motion/IK policy, AnimBlueprint state-machine inspection, guarded AnimBlueprint factory preflight, and guarded State Machine/State/transition/sequence content creation"]},
     {"id":"TASK-014","status":"NOT_STARTED"},
     {"id":"TASK-015","status":"NOT_STARTED"},
     {"id":"TASK-016","status":"PARTIAL"},
