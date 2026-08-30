@@ -1740,6 +1740,10 @@ def main() -> int:
         state.setdefault("rotation_count", 0)
         state.setdefault("codex", {"status": "UNKNOWN"})
         state.setdefault("claude", {"status": "UNKNOWN"})
+        # Read a legacy HANDOFF before PREFLIGHT changes the persisted state.
+        # New checkpoints use pending_handoff_target directly; this is solely
+        # the one-time migration path for TASK-016-era checkpoints.
+        restart_handoff_target = restored_handoff_target(state, set(agent_order))
         bus = StatusBus(state)
         bus.update(state="PREFLIGHT", current_action="Checking installed agent versions", event="Supervisor startup")
 
@@ -1779,7 +1783,7 @@ def main() -> int:
         reconcile_host_lock_owner(bus)
 
         preferred = state["preferred_agent"] if state["preferred_agent"] in instances else next(iter(instances))
-        pending_handoff_target = restored_handoff_target(state, set(instances))
+        pending_handoff_target = restart_handoff_target if restart_handoff_target in instances else restored_handoff_target(state, set(instances))
         # A structured handoff is a durable routing requirement, not merely
         # turn-local control flow.  On restart it must still wait for its
         # target instead of silently doing a fresh turn with the preferred
