@@ -192,6 +192,10 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     const TSharedPtr<FJsonObject> RetargeterData = RetargeterJson->GetObjectField(TEXT("data"));
     TestFalse(TEXT("New Retargeter has no source rig"), RetargeterData->GetBoolField(TEXT("has_source_ik_rig")));
     TestFalse(TEXT("New Retargeter has no target rig"), RetargeterData->GetBoolField(TEXT("has_target_ik_rig")));
+
+    TSharedPtr<FJsonObject> BatchGuardJson;
+    TestTrue(TEXT("Empty retarget batch returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::BatchRetargetAnimationAssets({}, TEXT("/Game/Missing.Missing"), TEXT("/Game/CotSMutationLive/Retargeted"), true)), BatchGuardJson));
+    TestFalse(TEXT("Empty retarget batch is rejected before mutation"), BatchGuardJson.IsValid() && BatchGuardJson->GetBoolField(TEXT("success")));
     return true;
 }
 

@@ -11,12 +11,15 @@
 #include "EditorAssetLibrary.h"
 #include "FileHelpers.h"
 #include "Engine/Blueprint.h"
+#include "Engine/SkeletalMesh.h"
 #include "EngineUtils.h"
 #include "EngineUtils.h"
 #include "Factories/CurveFactory.h"
 #include "GameFramework/Actor.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Misc/PackageName.h"
+#include "RetargetEditor/IKRetargetBatchOperation.h"
+#include "Retargeter/IKRetargeter.h"
 #include "Subsystems/EditorActorSubsystem.h"
 #include "UObject/SoftObjectPath.h"
 
@@ -49,6 +52,13 @@ bool IsExactGameObjectPath(const FString& Path)
 bool IsDisposableMapPath(const FString& Path)
 {
     return Path.StartsWith(ProofMapRoot, ESearchCase::CaseSensitive)
+        && FPackageName::IsValidLongPackageName(Path, false)
+        && !Path.Contains(TEXT("."));
+}
+
+bool IsDisposableRetargetTargetPath(const FString& Path)
+{
+    return Path.StartsWith(DisposableRoot, ESearchCase::CaseSensitive)
         && FPackageName::IsValidLongPackageName(Path, false)
         && !Path.Contains(TEXT("."));
 }
@@ -141,6 +151,77 @@ FString UCotSMutationToolset::DuplicateAsset(const FString& SourceObjectPath, co
     if (!UEditorAssetLibrary::DuplicateAsset(SourceObjectPath, DestinationObjectPath)) { return FCotSOperationResult::Fail(Op, TEXT("duplicate_failed"), TEXT("UE failed to duplicate the asset.")).ToJson(); }
     Result.Validation.Add(TEXT("re-inspect both exact object paths"));
     return Finish(Result, true, false, TEXT("Asset duplication is package-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::BatchRetargetAnimationAssets(const TArray<FString>& SourceAssetPaths, const FString& RetargeterPath, const FString& TargetPath, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.BatchRetargetAnimationAssets");
+    if (SourceAssetPaths.IsEmpty()) { return FCotSOperationResult::Fail(Op, TEXT("source_assets_required"), TEXT("At least one exact animation asset path is required."), bDryRun).ToJson(); }
+    if (!IsExactGameObjectPath(RetargeterPath)) { return InvalidPath(Op, RetargeterPath, bDryRun).ToJson(); }
+    if (!IsDisposableRetargetTargetPath(TargetPath))
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("invalid_disposable_target_path"), TEXT("TargetPath must be a package path under /Game/CotSMutationLive/ without an object suffix."), bDryRun).ToJson();
+    }
+
+    UIKRetargeter* Retargeter = Cast<UIKRetargeter>(LoadExactAsset(RetargeterPath));
+    if (!Retargeter) { return FCotSOperationResult::Fail(Op, TEXT("retargeter_not_found"), TEXT("RetargeterPath must resolve to a UIKRetargeter asset."), bDryRun).ToJson(); }
+    USkeletalMesh* SourceMesh = Retargeter->GetPreviewMesh(ERetargetSourceOrTarget::Source);
+    USkeletalMesh* TargetMesh = Retargeter->GetPreviewMesh(ERetargetSourceOrTarget::Target);
+    if (!SourceMesh || !TargetMesh || SourceMesh == TargetMesh)
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("retargeter_not_configured"), TEXT("The retargeter must provide distinct source and target preview meshes."), bDryRun).ToJson();
+    }
+
+    FCotSOperationResult Result = Start(Op, bDryRun, RetargeterPath, TargetPath);
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("retargeter_path"), RetargeterPath);
+    Result.Data->SetStringField(TEXT("target_path"), TargetPath);
+    Result.Data->SetStringField(TEXT("source_mesh"), SourceMesh->GetPathName());
+    Result.Data->SetStringField(TEXT("target_mesh"), TargetMesh->GetPathName());
+
+    TSet<FString> SeenPaths;
+    TArray<FAssetData> AssetsToRetarget;
+    for (const FString& SourceAssetPath : SourceAssetPaths)
+    {
+        if (!IsExactGameObjectPath(SourceAssetPath)) { return InvalidPath(Op, SourceAssetPath, bDryRun).ToJson(); }
+        if (SeenPaths.Contains(SourceAssetPath)) { return FCotSOperationResult::Fail(Op, TEXT("duplicate_source_asset"), TEXT("Each source animation asset path must be unique."), bDryRun).ToJson(); }
+        SeenPaths.Add(SourceAssetPath);
+        UAnimationAsset* Animation = Cast<UAnimationAsset>(LoadExactAsset(SourceAssetPath));
+        if (!Animation) { return FCotSOperationResult::Fail(Op, TEXT("unsupported_source_asset"), TEXT("Every source path must resolve to a UAnimationAsset."), bDryRun).ToJson(); }
+        if (Animation->GetSkeleton() != SourceMesh->GetSkeleton())
+        {
+            return FCotSOperationResult::Fail(Op, TEXT("source_skeleton_mismatch"), TEXT("Every source animation asset must use the source preview mesh's exact skeleton."), bDryRun).ToJson();
+        }
+        AssetsToRetarget.Add(FAssetData(Animation));
+        Result.AddAffectedObject(SourceAssetPath);
+    }
+    Result.Data->SetNumberField(TEXT("source_asset_count"), AssetsToRetarget.Num());
+    Result.Validation.Add(TEXT("retargeter_source_and_target_meshes_validated"));
+    Result.Validation.Add(TEXT("source_assets_use_exact_source_skeleton"));
+    Result.Validation.Add(TEXT("output_restricted_to_disposable_scope"));
+    if (bDryRun) { return Finish(Result, true, false, TEXT("Native batch retarget is package-backed and not transaction-backed.")); }
+
+    FIKRetargetBatchOperationInputs Inputs;
+    Inputs.AssetsToRetarget = MoveTemp(AssetsToRetarget);
+    Inputs.SourceMesh = SourceMesh;
+    Inputs.TargetMesh = TargetMesh;
+    Inputs.IKRetargetAsset = Retargeter;
+    Inputs.TargetPath = TargetPath;
+    Inputs.bUseSourcePath = false;
+    Inputs.bOverwriteExistingFiles = false;
+    const TArray<FAssetData> Outputs = UIKRetargetBatchOperation::RunBatchRetarget(Inputs);
+    if (Outputs.IsEmpty()) { return FCotSOperationResult::Fail(Op, TEXT("retarget_failed"), TEXT("UE's native batch retarget operation did not create any output assets.")).ToJson(); }
+
+    TArray<TSharedPtr<FJsonValue>> OutputPaths;
+    for (const FAssetData& Output : Outputs)
+    {
+        const FString OutputPath = Output.GetObjectPathString();
+        Result.AddAffectedObject(OutputPath);
+        OutputPaths.Add(MakeShared<FJsonValueString>(OutputPath));
+    }
+    Result.Data->SetArrayField(TEXT("output_assets"), OutputPaths);
+    Result.Validation.Add(TEXT("re-inspect every output asset and save only after review"));
+    return Finish(Result, true, false, TEXT("Native batch retarget is package-backed and not transaction-backed."));
 }
 
 FString UCotSMutationToolset::DeleteDisposableAsset(const FString& ObjectPath, bool bDryRun)
