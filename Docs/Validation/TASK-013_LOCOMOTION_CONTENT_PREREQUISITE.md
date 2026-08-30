@@ -405,6 +405,15 @@ CODE: 0`. The Host lock was released under `supervisor-task-013`.
 
 ## Remaining work (not done here)
 
+- The installed UE 5.8 template contains the exact missing companion package
+  `Templates/TemplateResources/High/Characters/Content/Mannequins/Meshes/SKM_Quinn_Simple.uasset`.
+  Its package strings reference the imported
+  `/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin` Skeleton, so
+  it is the bounded preview-mesh candidate. Its direct template dependencies
+  include Quinn material instances plus Control Rig and Physics assets; none
+  are copied here. A future native Unreal MCP asset-import operation must
+  import and inspect the exact mesh (and any required dependency closure)
+  before Blend Space or AnimBlueprint authoring claims are made.
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
   locomotion content or to check compatibility against it).
