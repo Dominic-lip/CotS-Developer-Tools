@@ -200,6 +200,10 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TSharedPtr<FJsonObject> BlendSpaceDryRunJson;
     TestTrue(TEXT("Disposable locomotion Blend Space dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::CreateDisposableLocomotionBlendSpace(TEXT("/Game/CotSMutationLive/BS_AutomationPreview.BS_AutomationPreview"), SkeletonPath, FString(), true)), BlendSpaceDryRunJson));
     TestFalse(TEXT("Disposable locomotion Blend Space dry-run rejects the imported Skeleton's unresolved preview mesh"), BlendSpaceDryRunJson.IsValid() && BlendSpaceDryRunJson->GetBoolField(TEXT("success")));
+
+    TSharedPtr<FJsonObject> LocomotionPolicyJson;
+    TestTrue(TEXT("Locomotion policy validation returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSValidationToolset::ValidateLocomotionPolicy(SkeletonPath, {}, { IdlePath }, { TEXT("root"), TEXT("pelvis"), TEXT("ik_foot_l"), TEXT("ik_foot_r") }, false)), LocomotionPolicyJson));
+    TestTrue(TEXT("Imported idle passes the non-looping, in-place, required-IK-bones policy"), LocomotionPolicyJson.IsValid() && LocomotionPolicyJson->GetBoolField(TEXT("success")));
     return true;
 }
 

@@ -207,6 +207,26 @@ Host `RunCotSAutomation` operation `d3f88bbc-7579-46dd-bc64-05fa4a046e87`
 returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
 CODE: 0`. The Host lock was released under `supervisor-task-013`.
 
+## Seventh increment: root-motion and IK policy validation
+
+`UCotSValidationToolset::ValidateLocomotionPolicy` is a read-only validator
+for an explicit Skeleton, expected-looping clip set, expected-one-shot clip
+set, required IK/root bone names, and an explicit root-motion mode. It reports
+each clip's exact path, skeleton identity, authored looping flag, authored
+root-motion flag, and per-bone presence; policy mismatches remain structured
+failures with the collected data retained for review.
+
+The permanent imported Mannequin content verifies the tool against actual
+authored data: `MM_Idle` passes as a non-looping, in-place clip with no root
+motion, and the Skeleton contains `root`, `pelvis`, `ik_foot_l`, and
+`ik_foot_r`. The names were read from the imported skeleton asset before
+adding the test; they are not inferred from display labels. This does not
+claim the whole locomotion set follows the policy yet.
+
+Canonical `Build-ToolLab.cmd` succeeded (`Result: Succeeded`, exit 0). Fixed
+Host `RunCotSAutomation` operation `0ab964bb-d951-47f3-add3-982e1b62c4d8`
+returned exit 0 and released the Host lock under `supervisor-task-013`.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
@@ -215,7 +235,8 @@ CODE: 0`. The Host lock was released under `supervisor-task-013`.
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof; provide a valid
   exact-skeleton preview mesh and create/inspect/clean up the guarded Blend
-  Space; implement AnimBP/state-machine create/configure,
+  Space; implement AnimBP/state-machine create/configure; apply the
+  root-motion/IK policy to the complete locomotion set and run its test,
   AnimBP/state-machine create/configure, root-motion/IK policy checks,
   locomotion validation and test running. (Skeleton compatibility inspection
   and duplicate-name detection — via the pre-existing `FindDuplicateNames` —
