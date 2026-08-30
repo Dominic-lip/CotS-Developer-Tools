@@ -182,6 +182,28 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TestFalse(TEXT("Idle animation reports its non-looping setting"), AnimationMetadataJson->GetObjectField(TEXT("data"))->GetBoolField(TEXT("is_looping")));
     TestFalse(TEXT("Idle animation reports no root motion"), AnimationMetadataJson->GetObjectField(TEXT("data"))->GetBoolField(TEXT("has_root_motion")));
 
+    const TArray<FString> LocomotionClipPaths = {
+        IdlePath,
+        TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Walk/MF_Unarmed_Walk_Fwd.MF_Unarmed_Walk_Fwd"),
+        TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Walk/MF_Unarmed_Walk_Bwd.MF_Unarmed_Walk_Bwd"),
+        TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Walk/MF_Unarmed_Walk_Left.MF_Unarmed_Walk_Left"),
+        TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Walk/MF_Unarmed_Walk_Right.MF_Unarmed_Walk_Right"),
+        TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jump/MM_Jump.MM_Jump"),
+        TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jump/MM_Fall_Loop.MM_Fall_Loop"),
+        TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jump/MM_Land.MM_Land")
+    };
+    for (const FString& ClipPath : LocomotionClipPaths)
+    {
+        TSharedPtr<FJsonObject> ClipMetadataJson;
+        TestTrue(FString::Printf(TEXT("Locomotion clip metadata returns JSON: %s"), *ClipPath), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetAnimationAsset(ClipPath)), ClipMetadataJson));
+        TestTrue(FString::Printf(TEXT("Locomotion clip metadata succeeds: %s"), *ClipPath), ClipMetadataJson.IsValid() && ClipMetadataJson->GetBoolField(TEXT("success")));
+        if (ClipMetadataJson.IsValid() && ClipMetadataJson->GetBoolField(TEXT("success")))
+        {
+            const TSharedPtr<FJsonObject> ClipData = ClipMetadataJson->GetObjectField(TEXT("data"));
+            AddInfo(FString::Printf(TEXT("TASK-013 metadata %s looping=%s root_motion=%s"), *ClipPath, ClipData->GetBoolField(TEXT("is_looping")) ? TEXT("true") : TEXT("false"), ClipData->GetBoolField(TEXT("has_root_motion")) ? TEXT("true") : TEXT("false")));
+        }
+    }
+
     TSharedPtr<FJsonObject> MissingJson;
     TestTrue(TEXT("Nonexistent object path returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetSkeletonCompatibility(TEXT("/Game/Characters/Mannequins/Meshes/Missing.Missing"), FString())), MissingJson));
     TestFalse(TEXT("Nonexistent object path fails cleanly"), MissingJson.IsValid() && MissingJson->GetBoolField(TEXT("success")));
@@ -239,6 +261,12 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TSharedPtr<FJsonObject> LocomotionPolicyJson;
     TestTrue(TEXT("Locomotion policy validation returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSValidationToolset::ValidateLocomotionPolicy(SkeletonPath, {}, { IdlePath }, { TEXT("root"), TEXT("pelvis"), TEXT("ik_foot_l"), TEXT("ik_foot_r") }, false)), LocomotionPolicyJson));
     TestTrue(TEXT("Imported idle passes the non-looping, in-place, required-IK-bones policy"), LocomotionPolicyJson.IsValid() && LocomotionPolicyJson->GetBoolField(TEXT("success")));
+
+    const TArray<FString> LoopingLocomotionClips = { LocomotionClipPaths[1], LocomotionClipPaths[2], LocomotionClipPaths[3], LocomotionClipPaths[4] };
+    const TArray<FString> OneShotLocomotionClips = { LocomotionClipPaths[0], LocomotionClipPaths[5], LocomotionClipPaths[6], LocomotionClipPaths[7] };
+    TSharedPtr<FJsonObject> CompleteLocomotionPolicyJson;
+    TestTrue(TEXT("Complete mixed locomotion policy validation returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSValidationToolset::ValidateLocomotionPolicyWithRootMotionSet(SkeletonPath, LoopingLocomotionClips, OneShotLocomotionClips, LoopingLocomotionClips, { TEXT("root"), TEXT("pelvis"), TEXT("ik_foot_l"), TEXT("ik_foot_r") })), CompleteLocomotionPolicyJson));
+    TestTrue(TEXT("Complete locomotion set passes per-clip looping/root-motion and required-IK-bones policy"), CompleteLocomotionPolicyJson.IsValid() && CompleteLocomotionPolicyJson->GetBoolField(TEXT("success")));
     return true;
 }
 

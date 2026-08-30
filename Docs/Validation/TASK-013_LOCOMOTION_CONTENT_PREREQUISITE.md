@@ -384,6 +384,25 @@ Succeeded`, exit 0). Fixed Host `RunCotSAutomation` operation
 13 CotS tests and `TEST COMPLETE. EXIT CODE: 0`. The Host lock was released
 under `supervisor-task-013`.
 
+## Sixteenth increment: complete mixed locomotion policy validation
+
+`UCotSValidationToolset::ValidateLocomotionPolicyWithRootMotionSet` validates
+one exact Skeleton, explicitly separated looping and one-shot clip sets, the
+subset that must contain root motion, and required root/IK bones. It rejects
+duplicates, missing clips, clips outside the declared policy, and mismatches
+in skeleton identity, looping, or per-clip root-motion settings.
+
+The full committed locomotion set passes the policy: the four `MF_Unarmed`
+walk clips are looping and root-motion enabled; `MM_Idle`, `MM_Jump`,
+`MM_Fall_Loop`, and `MM_Land` are non-looping and in-place. All eight resolve
+to the imported Mannequin Skeleton, which contains `root`, `pelvis`,
+`ik_foot_l`, and `ik_foot_r`.
+
+Canonical `Build-ToolLab.cmd` succeeded (`Result: Succeeded`, exit 0). Fixed
+Host `RunCotSAutomation` operation `10b094cd-a0e4-4208-804a-02f64432b212`
+returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
+CODE: 0`. The Host lock was released under `supervisor-task-013`.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
@@ -392,10 +411,7 @@ under `supervisor-task-013`.
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof; provide a valid
   exact-skeleton preview mesh and create/inspect/clean up the guarded Blend
-  Space; compile and inspect a created AnimBP; apply the
-  root-motion/IK policy to the complete locomotion set and run its test,
-  AnimBP/state-machine create/configure, root-motion/IK policy checks,
-  locomotion validation and test running. (Skeleton compatibility inspection
+  Space; compile and inspect a created AnimBP. (Skeleton compatibility inspection
   and duplicate-name detection — via the pre-existing `FindDuplicateNames` —
   are now covered.)
 - Run the disposable-test-area acceptance test end-to-end and report exact
