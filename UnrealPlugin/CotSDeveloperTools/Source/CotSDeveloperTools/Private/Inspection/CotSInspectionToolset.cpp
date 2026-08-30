@@ -237,10 +237,24 @@ FString UCotSInspectionToolset::GetPIEActorFloatProperty(const FString& ActorSel
         return FCotSOperationResult::Fail(Operation, TEXT("actor_not_found"), TEXT("No PIE actor matches the requested path, label, class path, or class name.")).ToJson();
     }
 
-    const FFloatProperty* Property = FindFProperty<FFloatProperty>(Match->GetClass(), FName(*PropertyName));
+    const FProperty* Property = FindFProperty<FProperty>(Match->GetClass(), FName(*PropertyName));
     if (!Property)
     {
-        return FCotSOperationResult::Fail(Operation, TEXT("float_property_not_found"), TEXT("The requested property does not exist or is not a float.")).ToJson();
+        return FCotSOperationResult::Fail(Operation, TEXT("float_property_not_found"), TEXT("The requested property does not exist or is not a float or double real value.")).ToJson();
+    }
+
+    double Value = 0.0;
+    if (const FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
+    {
+        Value = FloatProperty->GetPropertyValue_InContainer(Match);
+    }
+    else if (const FDoubleProperty* DoubleProperty = CastField<FDoubleProperty>(Property))
+    {
+        Value = DoubleProperty->GetPropertyValue_InContainer(Match);
+    }
+    else
+    {
+        return FCotSOperationResult::Fail(Operation, TEXT("float_property_not_found"), TEXT("The requested property does not exist or is not a float or double real value.")).ToJson();
     }
 
     FCotSOperationResult Result = FCotSOperationResult::Succeed(Operation);
@@ -249,7 +263,7 @@ FString UCotSInspectionToolset::GetPIEActorFloatProperty(const FString& ActorSel
     Result.Data->SetStringField(TEXT("actor_path"), Match->GetPathName());
     Result.Data->SetStringField(TEXT("actor_selector"), ActorSelector);
     Result.Data->SetStringField(TEXT("property_name"), PropertyName);
-    Result.Data->SetNumberField(TEXT("value"), Property->GetPropertyValue_InContainer(Match));
+    Result.Data->SetNumberField(TEXT("value"), Value);
     return Result.ToJson();
 }
 
