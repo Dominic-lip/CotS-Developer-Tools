@@ -1,55 +1,31 @@
-# Toolchain Roadmap
+# CotS Roadmap
 
-## M0 — Constitution and shared task system
-- Establish workspace boundaries and safety rules.
-- Use one task format for Codex and Claude.
-- Provide a shared task runner and prerequisite diagnostics.
+## Phase 1 — Autonomous Unreal Development Factory — COMPLETE
 
-## M1 — Disposable UE 5.8 Tool Lab
-- Minimal C++ project.
-- CotSDeveloperTools plugin linked into the project.
-- Clean editor build/startup.
-- No production assets.
+`TASK-000` through `TASK-016` established and proved the agent-neutral UE 5.8 development factory: Tool Lab, native MCP audit, inspection/mutation/validation/testing, autonomous lifecycle, persistent Codex/Claude supervision, provider failover, MetaHuman/animation tooling, Shardlands donor inspection, production bootstrap and dual-agent MCP parity.
 
-## M2 — Native MCP connectivity
-Both Codex and Claude must independently prove they can identify the open project, current map/selection and enumerate available toolsets.
+The historical milestone structure remains:
 
-## M3 — Native MCP capability audit
-Systematically test what Epic already provides. Record native/partial/missing/unreliable capabilities. Do not duplicate working native tools.
+- M0 Constitution/shared tasks
+- M1 Disposable UE 5.8 Tool Lab
+- M2 Native MCP connectivity
+- M3 Native MCP capability audit
+- M4 Inspection foundation
+- M5 Safe mutation foundation
+- M6 Build/test/diagnostics
+- M6.5 Autonomous lifecycle controller
+- M7 Autonomous proof
+- M8 Animation/MetaHuman tooling
+- M9 Shardlands donor tooling
+- M10 CotS production bootstrap
 
-## M4 — Inspection foundation
-Target capabilities:
-- Unreal/editor/project status
-- asset search and exact object paths
-- asset/class/property inspection
-- dependencies and referencers
-- Blueprint inspection
-- skeleton/animation inspection
-- plugin/module inventory
-- duplicate detection
+## Phase 2 — CotS Production Development
 
-## M5 — Safe mutation foundation
-Create/move/rename assets, set properties, create actors/components, save, compile and validate. Add impact reporting and dry-run behavior where practical.
+Production work is now driven by `Docs/PRODUCTION_ROADMAP.md` and `TASK-100+`.
 
-## M6 — Build/test/diagnostics
-Agents must be able to compile their own work, run Automation/PIE tests, collect logs and distinguish warnings from failures.
+The governing rule is **existing-work first, just in time**: before implementing each subsystem, inspect only the relevant existing Shardlands/CotS website/platform/API work and reuse/adapt it where it genuinely fits. Do not front-load a giant migration project and do not rewrite working systems merely because the production repository is clean.
 
-## M6.5 — Autonomous lifecycle controller (TASK-008A)
-- Loopback-only, agent-neutral Host MCP controls the disposable ToolLab lifecycle.
-- Fixed open/close/readiness/build/test operations preserve one mutating agent at a time.
-- No arbitrary host command, process, PID, or filesystem capability is exposed.
-
-## M7 — Autonomous proof
-The same specification is executed once by Codex and once by Claude: create a small test actor, compile/save, run it in PIE, inspect runtime state, stop PIE and report all changes without human editor clicking.
-
-## M8 — Animation and MetaHuman toolset
-Automate the workflow that previously required manual retarget/Blend Space/AnimBP work. Acceptance test: given a MetaHuman and a small locomotion set, produce and validate a working locomotion pipeline with minimal human intervention.
-
-## M9 — Shardlands donor tooling
-Inventory and compare legacy systems without modifying them. Generate explicit migrate/rebuild/leave decisions and dependency manifests.
-
-## M10 — CotS production bootstrap
-Only after the factory is proven: generate the clean production UE project, build targets, plugin linkage, validation gates and baseline commit.
+See `Docs/EXISTING_WORK_REUSE_POLICY.md`.
 
 ## Guiding metric
-The important metric is not number of tools. It is the amount of reliable Unreal work an agent can complete and verify without human editor manipulation.
+The important metric remains the amount of reliable, verified production MMO functionality the autonomous system can deliver without unnecessary manual editor manipulation, duplicated implementation or unsafe migration.
