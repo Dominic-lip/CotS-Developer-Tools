@@ -27,6 +27,8 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString CreateDisposableAnimBlueprint(const FString& ObjectPath, const FString& SkeletonPath, const FString& PreviewMeshPath, bool bDryRun = false);
     /** Adds one default-initialized State Machine to an exact disposable AnimBlueprint; state and transition authoring remains explicit. */
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString AddDisposableAnimBlueprintStateMachine(const FString& ObjectPath, bool bDryRun = false);
+    /** Adds one named State to a disposable State Machine and wires the State Machine entry node; transition authoring remains explicit. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString AddDisposableAnimBlueprintState(const FString& ObjectPath, const FString& StateName, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString DeleteDisposableAsset(const FString& ObjectPath, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString SaveAsset(const FString& ObjectPath, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString SetCurveEventFlag(const FString& ObjectPath, bool bIsEventCurve, bool bDryRun = false);

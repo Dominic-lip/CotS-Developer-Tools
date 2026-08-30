@@ -7,6 +7,9 @@
 #include "Animation/AnimSequence.h"
 #include "AnimationGraph.h"
 #include "AnimGraphNode_StateMachine.h"
+#include "AnimStateEntryNode.h"
+#include "AnimStateNode.h"
+#include "AnimationStateMachineSchema.h"
 #include "Animation/BlendSpace.h"
 #include "Components/SceneComponent.h"
 #include "Core/CotSEditorMutationScope.h"
@@ -15,6 +18,7 @@
 #include "Dom/JsonObject.h"
 #include "Editor.h"
 #include "EditorAssetLibrary.h"
+#include "EdGraphUtilities.h"
 #include "FileHelpers.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SkeletalMesh.h"
@@ -385,6 +389,53 @@ FString UCotSMutationToolset::AddDisposableAnimBlueprintStateMachine(const FStri
     Result.Data->SetNumberField(TEXT("state_count"), 0);
     Result.Validation.Add(TEXT("inspect with CotS.Inspection.GetAnimBlueprintStateMachines before adding states or transitions"));
     return Finish(Result, true, false, TEXT("State Machine authoring is graph-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::AddDisposableAnimBlueprintState(const FString& ObjectPath, const FString& StateName, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.AddDisposableAnimBlueprintState");
+    if (!IsDisposableAssetPath(ObjectPath)) { return FCotSOperationResult::Fail(Op, TEXT("outside_disposable_scope"), TEXT("State authoring is restricted to /Game/CotSMutationLive/ exact object paths."), bDryRun).ToJson(); }
+    if (StateName.IsEmpty() || !FName::IsValidXName(StateName, INVALID_OBJECTNAME_CHARACTERS)) { return FCotSOperationResult::Fail(Op, TEXT("invalid_state_name"), TEXT("StateName must be a non-empty valid Unreal object name."), bDryRun).ToJson(); }
+    UAnimBlueprint* Blueprint = Cast<UAnimBlueprint>(LoadExactAsset(ObjectPath));
+    if (!Blueprint) { return FCotSOperationResult::Fail(Op, TEXT("animblueprint_not_found"), TEXT("ObjectPath must resolve to a UAnimBlueprint asset."), bDryRun).ToJson(); }
+    UAnimationGraph* AnimGraph = nullptr;
+    for (UEdGraph* Graph : Blueprint->FunctionGraphs) { if (UAnimationGraph* Candidate = Cast<UAnimationGraph>(Graph)) { AnimGraph = Candidate; break; } }
+    if (!AnimGraph) { return FCotSOperationResult::Fail(Op, TEXT("animation_graph_not_found"), TEXT("The AnimBlueprint has no editable UAnimationGraph."), bDryRun).ToJson(); }
+    TArray<UAnimGraphNode_Base*> Machines;
+    AnimGraph->GetGraphNodesOfClass(UAnimGraphNode_StateMachine::StaticClass(), Machines, true);
+    UAnimGraphNode_StateMachine* Machine = Machines.Num() == 1 ? Cast<UAnimGraphNode_StateMachine>(Machines[0]) : nullptr;
+    if (!Machine || !Machine->EditorStateMachineGraph || !Machine->EditorStateMachineGraph->EntryNode) { return FCotSOperationResult::Fail(Op, TEXT("state_machine_not_found"), TEXT("The AnimBlueprint must contain exactly one initialized State Machine."), bDryRun).ToJson(); }
+    UAnimationStateMachineGraph* StateMachineGraph = Machine->EditorStateMachineGraph;
+    TArray<UAnimStateNode*> ExistingStates;
+    StateMachineGraph->GetNodesOfClass(ExistingStates);
+    for (UAnimStateNode* ExistingState : ExistingStates)
+    {
+        if (ExistingState && ExistingState->GetStateName().Equals(StateName, ESearchCase::CaseSensitive))
+        {
+            FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath);
+            Result.Data = MakeShared<FJsonObject>();
+            Result.Data->SetStringField(TEXT("state_machine_graph"), StateMachineGraph->GetPathName());
+            Result.Data->SetStringField(TEXT("state_graph"), ExistingState->BoundGraph ? ExistingState->BoundGraph->GetPathName() : FString());
+            Result.Validation.Add(TEXT("already_contains_requested_state"));
+            return Finish(Result, false, false, TEXT("State authoring is graph-backed and not transaction-backed."));
+        }
+    }
+    FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath);
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("state_machine_graph"), StateMachineGraph->GetPathName());
+    Result.Data->SetStringField(TEXT("requested_state_name"), StateName);
+    if (bDryRun) { Result.Validation.Add(TEXT("validated_named_entry_wired_state_creation")); return Finish(Result, true, false, TEXT("State authoring is graph-backed and not transaction-backed.")); }
+    Blueprint->Modify();
+    StateMachineGraph->Modify();
+    UAnimStateNode* StateNode = FEdGraphSchemaAction_NewStateNode::SpawnNodeFromTemplate<UAnimStateNode>(StateMachineGraph, NewObject<UAnimStateNode>(), FVector2f(240.0f, 0.0f), false);
+    if (!StateNode || !StateNode->BoundGraph) { return FCotSOperationResult::Fail(Op, TEXT("state_create_failed"), TEXT("UE could not initialize the State graph.")).ToJson(); }
+    FEdGraphUtilities::RenameGraphToNameOrCloseToName(StateNode->BoundGraph, StateName);
+    StateNode->AutowireNewNode(StateMachineGraph->EntryNode->GetOutputPin());
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    Result.Data->SetStringField(TEXT("state_graph"), StateNode->BoundGraph->GetPathName());
+    Result.Data->SetBoolField(TEXT("entry_wired"), StateMachineGraph->EntryNode->GetOutputNode() == StateNode);
+    Result.Validation.Add(TEXT("inspect with CotS.Inspection.GetAnimBlueprintStateMachines before adding transitions"));
+    return Finish(Result, true, false, TEXT("State authoring is graph-backed and not transaction-backed."));
 }
 
 FString UCotSMutationToolset::AddLocomotionBlendSpaceSample(const FString& BlendSpacePath, const FString& AnimationPath, double Speed, double Direction, bool bDryRun)
