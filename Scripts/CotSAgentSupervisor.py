@@ -240,6 +240,7 @@ CLAUDE_ALLOWED_TOOLS = (
     "Read Edit Write Grep Glob "
     "Bash(python Scripts/CotS-GitCompletion.py *) "
     "Bash(Scripts\\Build-ToolLab.cmd *) "
+    "Bash(Scripts\\Run-CotSTask.cmd *) "
     "mcp__cots-host__GetToolLabStatus "
     "mcp__cots-host__AcquireMutationLock "
     "mcp__cots-host__ReleaseMutationLock "

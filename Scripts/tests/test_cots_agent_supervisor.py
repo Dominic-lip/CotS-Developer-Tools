@@ -940,6 +940,10 @@ class TestClaudeAgentRunTurn(unittest.TestCase):
         self.assertIn("mcp__unreal-mcp__*", allowed)
         self.assertFalse(any(item.startswith("mcp__cots-host__") and item.endswith("*") for item in allowed))
 
+    def test_allowlist_exposes_the_shared_task_runner(self):
+        allowed = sup.CLAUDE_ALLOWED_TOOLS.split()
+        self.assertIn("Bash(Scripts\\Run-CotSTask.cmd", " ".join(allowed))
+
     def test_auth_required_stderr_raises_authentication_required(self):
         process = FakeClaudeProcess(stdout_lines=[], stderr_lines=["Error: Not authenticated. Please run /login."], exit_code=1)
         agent = self._agent_with_popen(process)
