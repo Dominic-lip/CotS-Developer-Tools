@@ -3,8 +3,8 @@
   "policy": "Only COMPLETE_VERIFIED is schedulable as complete. Every other status blocks the earliest dependency until durable acceptance evidence is recorded.",
   "tasks": [
     {"id":"TASK-000","status":"COMPLETE_VERIFIED","evidence":["e9f3a61: AGENTS.md and Docs/ARCHITECTURE.md"]},
-    {"id":"TASK-001","status":"PARTIAL"},
-    {"id":"TASK-002","status":"COMPLETE_BUT_EVIDENCE_MISSING"},
+    {"id":"TASK-001","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-001_RUNNER_PROOF.md: Claude runner and active Codex adapter harmless-read proofs"]},
+    {"id":"TASK-002","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-002_TOOLLAB_PROOF.md: canonical build, native editor inspection, and graceful lifecycle proof"]},
     {"id":"TASK-003","status":"PARTIAL"},
     {"id":"TASK-004","status":"PARTIAL"},
     {"id":"TASK-005","status":"COMPLETE_BUT_EVIDENCE_MISSING"},
