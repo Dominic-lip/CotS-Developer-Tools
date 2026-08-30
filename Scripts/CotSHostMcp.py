@@ -326,7 +326,14 @@ class Handler(BaseHTTPRequestHandler):
                 # instead of ever sending tools/list or tools/call.
                 extra_headers["Mcp-Session-Id"] = str(uuid.uuid4())
                 response = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}}, "serverInfo": {"name": "CotS Host Controller", "version": "1.0"}}
-            elif method == "notifications/initialized": return
+            elif method == "notifications/initialized":
+                # A JSON-RPC notification has no id and expects no JSON-RPC
+                # result, but the client is still waiting on an HTTP response
+                # to this POST; the spec's contract for a received
+                # notification is an empty 202, not silence (silence just
+                # hangs the client until its own transport timeout).
+                self.send_response(202); self.send_header("Content-Length", "0"); self.end_headers()
+                return
             elif method == "tools/list": response = {"tools": [{"name": name, "description": description, "inputSchema": {"type": "object", "properties": {"agent_id": {"type": "string"}, "timeout_seconds": {"type": "integer"}}}} for name, (description, _) in TOOLS.items()]}
             elif method == "tools/call":
                 params = request.get("params", {}); name = params.get("name"); arguments = params.get("arguments", {})
