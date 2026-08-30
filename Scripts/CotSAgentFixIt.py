@@ -82,8 +82,10 @@ def run_incident(path: Path, attempt: int, *, runner=subprocess.run) -> dict[str
     incident = read_json(path)
     checkpoint = read_json(Path(str(incident.get("checkpoint_path") or SUPERVISOR_STATE)))
     provider = select_provider(incident, attempt)
-    if not incident or not provider:
-        result = {"result": "HUMAN_REQUIRED", "reason": "incident unreadable or no trusted repair provider"}
+    if not incident:
+        result = {"result": "HUMAN_REQUIRED", "reason": "incident unreadable"}
+    elif not provider:
+        result = {"result": "WAITING_FOR_PROVIDER", "reason": "no repair provider currently available"}
     elif active_mutator(checkpoint):
         result = {"result": "HUMAN_REQUIRED", "reason": "active mutation provider remains live; refusing concurrent repair"}
     else:

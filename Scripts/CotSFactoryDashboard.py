@@ -78,7 +78,7 @@ def _agent_line(name: str, info: dict[str, Any], width: int) -> str:
     return _truncate(f"{name:<6} {status:<18} v{version}{extra}", width)
 
 
-def render_lines(snapshot: dict[str, Any], spinner_index: int = 0, width: int | None = None) -> list[str]:
+def render_lines(snapshot: dict[str, Any], spinner_index: int = 0, width: int | None = None, height: int | None = None) -> list[str]:
     """Render a bounded, ANSI-free frame for tests and non-colour terminals."""
     width = max(60, min(width or shutil.get_terminal_size((100, 24)).columns, 120))
     inner = width - 4
@@ -157,14 +157,23 @@ def render_lines(snapshot: dict[str, Any], spinner_index: int = 0, width: int | 
                   row(f"State: {recovery_state}    Elapsed: {format_elapsed(time.time() - float(recovery.get('started_at') or snapshot.get('updated_at') or time.time()))}"),
                   row(f"Action: {recovery.get('current_action') or 'controlled repair'}"),
                   row(f"Previous failure: {recovery.get('reason') or recovery.get('previous_failure') or 'none'}"), bottom]
+    # The lower priority sections collapse before terminal scrolling.  Keep
+    # the current task/services/agents visible even in a very short console.
+    reserved = len(lines) + 3
+    event_rows = max(0, (height - reserved) if height is not None else len(events or ["(none yet)"]))
     lines += [top("Recent Activity")]
-    lines.extend(row(event) for event in (events or ["(none yet)"]))
+    if event_rows:
+        lines.extend(row(event) for event in (events or ["(none yet)"])[-event_rows:])
+    elif height is not None:
+        lines.append(row("Recent activity collapsed for terminal height"))
     lines += [bottom, "Ctrl+C  Safe shutdown  ·  Factory will checkpoint before exit"]
+    if height is not None and len(lines) > height:
+        return lines[:max(1, height - 1)] + ["Terminal height constrained; lower-priority details collapsed"]
     return lines
 
 
-def render_frame(snapshot: dict[str, Any], spinner_index: int = 0, width: int | None = None, color: bool = False) -> str:
-    lines = render_lines(snapshot, spinner_index, width)
+def render_frame(snapshot: dict[str, Any], spinner_index: int = 0, width: int | None = None, color: bool = False, height: int | None = None) -> str:
+    lines = render_lines(snapshot, spinner_index, width, height)
     if not color:
         return "\n".join(lines)
     _status, colour = status_style(snapshot.get("factory", snapshot.get("state")))
@@ -203,6 +212,17 @@ class TerminalDashboard:
         except UnicodeEncodeError:
             self.unicode = False
         self.spinner_index = 0
+        self.entered = False
+
+    def enter(self) -> None:
+        if self.ansi and not self.entered:
+            self.stream.write("\x1b[?1049h\x1b[?25l\x1b[H")
+            self.stream.flush(); self.entered = True
+
+    def close(self) -> None:
+        if self.ansi and self.entered:
+            self.stream.write("\x1b[0m\x1b[?25h\x1b[?1049l")
+            self.stream.flush(); self.entered = False
 
     @staticmethod
     def _enable_windows_ansi() -> None:
@@ -217,7 +237,9 @@ class TerminalDashboard:
             pass
 
     def draw(self, snapshot: dict[str, Any]) -> None:
-        frame = render_frame(snapshot, self.spinner_index, color=self.color)
+        size = shutil.get_terminal_size((100, 24))
+        self.enter()
+        frame = render_frame(snapshot, self.spinner_index, width=size.columns, height=max(8, size.lines - 1), color=self.color)
         self.spinner_index += 1
         if not self.unicode:
             frame = frame.translate(str.maketrans({"┌": "+", "┐": "+", "└": "+", "┘": "+", "─": "-", "│": "|", "·": ".", "—": "-", "…": "..."}))

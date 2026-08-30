@@ -12,18 +12,19 @@ import http.client
 import json
 import subprocess
 import sys
-import threading
 import time
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 try:  # Supports both ``python Scripts/...`` and importlib-loaded unit tests.
-    from CotSFactoryDashboard import TerminalDashboard, strip_terminal_controls
-    from CotSRecovery import RECOVERABLE_EXIT, HUMAN_REQUIRED_EXIT, IncidentCategory, write_incident
+    from CotSFactoryDashboard import strip_terminal_controls
+    from CotSRecovery import (RECOVERABLE_EXIT, HUMAN_REQUIRED_EXIT, IncidentCategory, write_incident,
+                              request_provider_cancel, clear_provider_cancel, clear_provider_activity)
 except ModuleNotFoundError:
-    from Scripts.CotSFactoryDashboard import TerminalDashboard, strip_terminal_controls
-    from Scripts.CotSRecovery import RECOVERABLE_EXIT, HUMAN_REQUIRED_EXIT, IncidentCategory, write_incident
+    from Scripts.CotSFactoryDashboard import strip_terminal_controls
+    from Scripts.CotSRecovery import (RECOVERABLE_EXIT, HUMAN_REQUIRED_EXIT, IncidentCategory, write_incident,
+                                      request_provider_cancel, clear_provider_cancel, clear_provider_activity)
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "Scripts"
@@ -36,7 +37,11 @@ SUPERVISOR_SCRIPT = SCRIPTS / "CotSAgentSupervisor.py"
 MAX_REPAIR_ATTEMPTS = 3
 POLL_SECONDS = 1.0
 DASHBOARD_REFRESH_SECONDS = 0.75
-CHECKPOINT_STALE_SECONDS = 90.0
+SUPERVISOR_HEARTBEAT_STALE_SECONDS = 90.0
+PROVIDER_TURN_HEARTBEAT_STALE_SECONDS = 75.0
+# Compatibility name retained for external dashboard/test consumers; it no
+# longer describes the actual running-provider policy.
+CHECKPOINT_STALE_SECONDS = PROVIDER_TURN_HEARTBEAT_STALE_SECONDS
 WAIT_HEARTBEAT_STALE_SECONDS = 150.0
 PROBE_HEARTBEAT_STALE_SECONDS = 90.0
 SUPERVISOR_STARTUP_GRACE_SECONDS = 30.0
@@ -227,8 +232,6 @@ class FactoryController:
         self.state.setdefault("repair_attempts", {})
         self.state.setdefault("recent_events", [])
         self.state.setdefault("started_at", time.time())
-        self.dashboard_stop = threading.Event()
-        self.dashboard_thread: threading.Thread | None = None
         self._git_snapshot: dict[str, Any] = {}
         self._git_snapshot_at = 0.0
         self._normal_restart_requested = False
@@ -286,24 +289,6 @@ class FactoryController:
                 self._git_snapshot_at = time.monotonic()
         snapshot.update(self._git_snapshot)
         return snapshot
-
-    def start_dashboard(self) -> None:
-        if self.dashboard_thread is not None:
-            return
-        dashboard = TerminalDashboard()
-        def refresh() -> None:
-            while not self.dashboard_stop.is_set():
-                dashboard.draw(self.dashboard_snapshot())
-                self.dashboard_stop.wait(DASHBOARD_REFRESH_SECONDS)
-            dashboard.draw(self.dashboard_snapshot())
-        self.dashboard_thread = threading.Thread(target=refresh, name="cots-factory-dashboard", daemon=True)
-        self.dashboard_thread.start()
-
-    def stop_dashboard(self) -> None:
-        self.dashboard_stop.set()
-        if self.dashboard_thread is not None:
-            self.dashboard_thread.join(timeout=3)
-            self.dashboard_thread = None
 
     def start_host(self) -> None:
         if host_ready():
@@ -369,7 +354,7 @@ class FactoryController:
     def watchdog_seconds(state: str) -> float:
         """State-specific freshness contracts; waits are not active turns."""
         if state in {"RUNNING_CODEX", "RUNNING_CLAUDE"}:
-            return CHECKPOINT_STALE_SECONDS
+            return PROVIDER_TURN_HEARTBEAT_STALE_SECONDS
         if state in {"WAITING_FOR_AGENT_CAPACITY", "WAITING_FOR_USAGE_RESET"}:
             return WAIT_HEARTBEAT_STALE_SECONDS
         if state == "PROBING_AVAILABILITY":
@@ -381,7 +366,7 @@ class FactoryController:
         return WAIT_HEARTBEAT_STALE_SECONDS
 
     def mark_supervisor_stopped(self, checkpoint: dict[str, Any]) -> None:
-        cleaned = clear_stopped_provider_activity(checkpoint)
+        cleaned = clear_provider_activity(checkpoint)
         if cleaned != checkpoint:
             cleaned["updated_at"] = time.time()
             atomic_json(SUPERVISOR_STATE, cleaned)
@@ -401,6 +386,19 @@ class FactoryController:
         state = checkpoint["state"]
         age = self.checkpoint_age(checkpoint, current)
         watchdog = self.watchdog_seconds(state)
+        if state in {"RUNNING_CODEX", "RUNNING_CLAUDE"}:
+            turn = checkpoint.get("provider_turn") or {}
+            heartbeat = turn.get("heartbeat_at") or checkpoint.get("provider_turn_heartbeat_at")
+            # Legacy checkpoints predate local turn heartbeats.  Treat their
+            # general checkpoint pulse as a compatibility signal until the
+            # new supervisor has written the first provider_turn object.
+            heartbeat = heartbeat if isinstance(heartbeat, (int, float)) else self.checkpoint_heartbeat_at(checkpoint)
+            heartbeat_age = max(0.0, current - float(heartbeat)) if heartbeat else float("inf")
+            if heartbeat_age > watchdog:
+                return GateCategory.RECOVERABLE_STALE_STATE, f"provider turn local heartbeat stale for {heartbeat_age:.0f}s"
+            # The supervisor's general snapshot may be older than a long turn;
+            # the local provider heartbeat is the authoritative running-turn liveness.
+            return None, None
         # Wait-state pulses are local telemetry: their freshness proves the
         # sleeping supervisor is alive without spending a provider turn.
         heartbeat = checkpoint.get("wait_heartbeat_at") if state.startswith("WAITING_") else self.checkpoint_heartbeat_at(checkpoint)
@@ -432,12 +430,17 @@ class FactoryController:
     def await_terminal_boundary(self, reason: str) -> int | None:
         """Let a real gate finish its checkpoint/turn boundary before a kill."""
         assert self.supervisor is not None
-        deadline = time.monotonic() + TERMINAL_BOUNDARY_WAIT_SECONDS
+        checkpoint = read_json(SUPERVISOR_STATE, {})
+        request_provider_cancel(self.supervisor.pid, reason)
+        self.save("Requested graceful provider deactivation before recovery", supervisor_state="STOPPING")
+        deadline = time.monotonic() + TERMINAL_BOUNDARY_WAIT_SECONDS + 30
         while self.supervisor.poll() is None and time.monotonic() < deadline:
             time.sleep(POLL_SECONDS)
         if self.supervisor.poll() is None:
             self.save(f"Supervisor boundary timeout: {reason}; stopping owned child")
             self.stop_owned(self.supervisor, "supervisor")
+        clear_provider_cancel()
+        self.mark_supervisor_stopped(read_json(SUPERVISOR_STATE, {}))
         return self.supervisor.poll()
 
     def capture(self, category: GateCategory, reason: str) -> dict[str, Any]:
@@ -504,7 +507,6 @@ class FactoryController:
         return False
 
     def run(self) -> int:
-        self.start_dashboard()
         try:
             self.start_host()
             self.start_supervisor()
@@ -540,7 +542,7 @@ class FactoryController:
                 repair_mode = not self._normal_restart_requested
                 self._normal_restart_requested = False
         finally:
-            self.stop_dashboard()
+            clear_provider_cancel()
 
 
 def main() -> int:

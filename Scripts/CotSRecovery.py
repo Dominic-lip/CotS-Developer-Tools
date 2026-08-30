@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import time
 from enum import Enum
@@ -19,6 +20,70 @@ MAX_INCIDENT_LOG = 2400
 MAX_EVENTS = 12
 RECOVERABLE_EXIT = 75
 HUMAN_REQUIRED_EXIT = 76
+PROVIDER_CANCEL = COTS / "provider-cancel.local.json"
+
+
+def provider_is_active(checkpoint: dict[str, Any]) -> bool:
+    """Active means a live locally-owned turn, never a stale UI label."""
+    turn = checkpoint.get("provider_turn") or {}
+    return (str(checkpoint.get("state", "")).startswith("RUNNING_")
+            and bool(checkpoint.get("active_agent"))
+            and bool(turn.get("heartbeat_at")))
+
+
+def request_provider_cancel(supervisor_pid: int | None, reason: str) -> None:
+    """A narrow, durable request consumed by the owning Supervisor only."""
+    atomic_json(PROVIDER_CANCEL, {"supervisor_pid": supervisor_pid, "reason": reason,
+                                  "requested_at": time.time()})
+
+
+def clear_provider_cancel() -> None:
+    try:
+        PROVIDER_CANCEL.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def clear_provider_activity(checkpoint: dict[str, Any], *, state: str = "STOPPED") -> dict[str, Any]:
+    value = dict(checkpoint)
+    if checkpoint.get("provider_ownership"):
+        value["orphaned_provider_ownership"] = checkpoint.get("provider_ownership")
+    value.update({"state": state, "active_agent": None, "provider_turn": None,
+                  "provider_turn_started_at": None, "provider_turn_heartbeat_at": None,
+                  "provider_ownership": None, "updated_at": time.time()})
+    for name in ("codex", "claude"):
+        info = value.get(name)
+        if isinstance(info, dict) and info.get("status") == "ACTIVE":
+            value[name] = {**info, "status": "IDLE"}
+    return value
+
+
+def _pid_live(pid: object) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def reclaim_orphaned_provider(checkpoint: dict[str, Any], *, runner=subprocess.run) -> bool:
+    """Terminate only a recorded CotS provider child after its owner died.
+
+    This intentionally has no process-name scan.  It accepts the exact pid
+    written by the supervisor, a whitelisted adapter kind, and requires the
+    recorded supervisor pid to be gone before touching anything.
+    """
+    owner = checkpoint.get("provider_ownership") or checkpoint.get("orphaned_provider_ownership") or {}
+    pid, parent, kind = owner.get("pid"), owner.get("supervisor_pid"), owner.get("kind")
+    if kind not in {"codex_app_server", "claude_print"} or not _pid_live(pid) or _pid_live(parent):
+        return not _pid_live(pid)
+    if os.name == "nt":
+        runner(["taskkill", "/PID", str(pid), "/T", "/F"], text=True, capture_output=True, check=False)
+    else:
+        os.kill(int(pid), 15)
+    return not _pid_live(pid)
 
 
 class IncidentCategory(str, Enum):

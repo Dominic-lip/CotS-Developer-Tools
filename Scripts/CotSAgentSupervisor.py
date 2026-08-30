@@ -36,6 +36,7 @@ from typing import Any
 REPO = Path(__file__).resolve().parent.parent
 COTS_DIR = REPO / ".cots"
 STATE = COTS_DIR / "agent-supervisor.local.json"
+PROVIDER_CANCEL = COTS_DIR / "provider-cancel.local.json"
 CODEX_PROTOCOL_LOG = COTS_DIR / "codex-protocol.log"
 CLAUDE_PROTOCOL_LOG = COTS_DIR / "claude-protocol.log"
 EVENTS_LOG = COTS_DIR / "supervisor-events.log"
@@ -62,6 +63,7 @@ AVAILABILITY_PROBE_RECHECK_SECONDS = 60
 # checkpoint pulse frequently enough that the outer controller can distinguish
 # a healthy sleeping supervisor from a wedged one without spending quota.
 WAIT_HEARTBEAT_SECONDS = 30.0
+PROVIDER_TURN_HEARTBEAT_SECONDS = 15.0
 # A provider that reports usage exhaustion without an actual reset timestamp
 # must not become a permanent human gate.  Probe it harmlessly after five
 # minutes, then back off 10m, 20m and finally 30m between continued unknown
@@ -463,6 +465,14 @@ def save_state(value: dict[str, Any]) -> None:
     _replace_with_retry(temporary, STATE)
 
 
+def read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def log_event(text: str) -> None:
     EVENTS_LOG.parent.mkdir(exist_ok=True)
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -513,6 +523,44 @@ class StatusBus:
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
             return dict(self.data)
+
+
+class ProviderTurnHeartbeat:
+    """Local liveness pulse; it deliberately does not ask the model to speak."""
+    def __init__(self, bus: StatusBus, agent: Any, name: str, shutdown: threading.Event) -> None:
+        self.bus, self.agent, self.name, self.shutdown = bus, agent, name, shutdown
+        self.stop = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        now = time.time()
+        ownership = self.agent.ownership()
+        self.bus.update(provider_turn_started_at=now, provider_turn_heartbeat_at=now,
+                        provider_turn={"started_at": now, "heartbeat_at": now, "active_agent": self.name,
+                                       "session_id": ownership.get("session_id"), "state": "RUNNING"},
+                        provider_ownership=ownership)
+        def pulse() -> None:
+            while not self.stop.wait(PROVIDER_TURN_HEARTBEAT_SECONDS):
+                cancel = read_json(PROVIDER_CANCEL)
+                if cancel and cancel.get("supervisor_pid") == os.getpid():
+                    self.bus.update(current_action="Cancelling provider turn for recoverable handoff",
+                                    event="Factory requested graceful provider deactivation")
+                    self.shutdown.set(); self.agent.cancel_owned_turn()
+                now = time.time()
+                ownership = self.agent.ownership()
+                self.bus.update(provider_turn_heartbeat_at=now,
+                                provider_turn={"started_at": self.bus.data.get("provider_turn_started_at"),
+                                               "heartbeat_at": now, "active_agent": self.name,
+                                               "session_id": ownership.get("session_id"), "state": "RUNNING"},
+                                provider_ownership=ownership)
+        self.thread = threading.Thread(target=pulse, name="cots-provider-turn-heartbeat", daemon=True)
+        self.thread.start()
+
+    def close(self) -> None:
+        self.stop.set()
+        if self.thread: self.thread.join(timeout=2)
+        self.bus.update(provider_turn=None, provider_turn_started_at=None, provider_turn_heartbeat_at=None,
+                        provider_ownership=None)
 
 
 # --------------------------------------------------------------------------
@@ -1057,6 +1105,14 @@ class CodexAgent:
             self.app.close()
             self.app = None
 
+    def ownership(self) -> dict[str, Any]:
+        pid = self.app.process.pid if self.app is not None else None
+        return {"provider": self.name, "pid": pid, "supervisor_pid": os.getpid(),
+                "session_id": self.thread_id, "kind": "codex_app_server"}
+
+    def cancel_owned_turn(self) -> None:
+        self.deactivate()
+
 
 # --------------------------------------------------------------------------
 # Claude adapter: one ``claude -p`` invocation per turn, resumed by session id
@@ -1351,6 +1407,7 @@ class ClaudeAgent:
 
     def __init__(self) -> None:
         self.session_id: str | None = None
+        self.process: Any | None = None
 
     @staticmethod
     def available() -> bool:
@@ -1395,7 +1452,11 @@ class ClaudeAgent:
             )
         except OSError as error:
             raise AppServerError(f"claude_spawn_failed: {error}") from error
-        result_obj, stderr_lines = _drive_claude_process(process, bus, shutdown_event)
+        self.process = process
+        try:
+            result_obj, stderr_lines = _drive_claude_process(process, bus, shutdown_event)
+        finally:
+            self.process = None
         returncode = process.poll()
         duration_ms = (time.monotonic() - started) * 1000
         combined = "\n".join(stderr_lines)
@@ -1418,7 +1479,15 @@ class ClaudeAgent:
         return TurnResult(str(result_obj.get("result", "")), duration_ms, activity_count)
 
     def deactivate(self) -> None:
-        pass  # nothing to close: each turn is already a completed subprocess
+        self.cancel_owned_turn()
+
+    def ownership(self) -> dict[str, Any]:
+        return {"provider": self.name, "pid": getattr(self.process, "pid", None), "supervisor_pid": os.getpid(),
+                "session_id": self.session_id, "kind": "claude_print"}
+
+    def cancel_owned_turn(self) -> None:
+        if self.process is not None and self.process.poll() is None:
+            _terminate_owned_process(self.process)
 
     def probe_availability(self) -> None:
         """Claude has no lighter authenticated-turn primitive; use the same
@@ -2107,6 +2176,10 @@ def main() -> int:
         # the one-time migration path for TASK-016-era checkpoints.
         restart_handoff_target = restored_handoff_target(state, set(agent_order))
         bus = StatusBus(state)
+        try:
+            PROVIDER_CANCEL.unlink()
+        except FileNotFoundError:
+            pass
         bus.update(state="PREFLIGHT", current_action="Checking installed agent versions", event="Supervisor startup")
         try:
             foundation_ready, foundation_message = foundation_completion_decision()
@@ -2255,7 +2328,12 @@ def main() -> int:
                         if simulate_after.get(active_name) and turns_run[active_name] == simulate_after[active_name] + 1:
                             raise UsageResetRequired(f"simulated_{active_name}_usage_limit", time.time() + 60)
                         try:
-                            result = agent.run_turn(prompt, bus=bus, shutdown_event=shutdown_event)
+                            heartbeat = ProviderTurnHeartbeat(bus, agent, active_name, shutdown_event)
+                            heartbeat.start()
+                            try:
+                                result = agent.run_turn(prompt, bus=bus, shutdown_event=shutdown_event)
+                            finally:
+                                heartbeat.close()
                         except UsageResetRequired:
                             raise
                         except AuthenticationRequired as auth_error:

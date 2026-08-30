@@ -311,5 +311,23 @@ class TestFactoryDashboard(unittest.TestCase):
         plain = io.StringIO(); dashboard.TerminalDashboard(plain, color=False).draw(self.snapshot())
         self.assertNotIn("\x1b", plain.getvalue())
 
+    def test_alternate_screen_cleanup_and_height_bound(self):
+        stream = TtyBuffer(); sink = dashboard.TerminalDashboard(stream, color=True)
+        sink.enter(); sink.draw(self.snapshot()); sink.close()
+        self.assertIn("\x1b[?1049h", stream.getvalue())
+        self.assertIn("\x1b[?1049l", stream.getvalue())
+        self.assertLessEqual(len(dashboard.render_lines(self.snapshot(), width=80, height=12)), 12)
+
+
+class TestProviderTurnHeartbeat(unittest.TestCase):
+    def test_silent_running_provider_is_healthy_with_local_pulse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "state.json"; checkpoint = Path(directory) / "checkpoint.json"
+            checkpoint.write_text(json.dumps({"state": "RUNNING_CODEX", "updated_at": 1.0,
+                                               "provider_turn": {"heartbeat_at": 100.0}}))
+            with mock.patch.object(factory, "STATE_PATH", state), mock.patch.object(factory, "SUPERVISOR_STATE", checkpoint):
+                controller = factory.FactoryController(); controller.supervisor = FakeProcess()
+                self.assertEqual(controller.live_supervisor_boundary(now=120.0), (None, None))
+
 
 if __name__ == "__main__": unittest.main()
