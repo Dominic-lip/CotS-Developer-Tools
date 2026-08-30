@@ -19,6 +19,7 @@ public class CotSDeveloperTools : ModuleRules
             "AssetTools",
             "AssetRegistry",
             "EditorScriptingUtilities",
+            "IKRig",
             "Projects",
             "Slate",
             "Json",

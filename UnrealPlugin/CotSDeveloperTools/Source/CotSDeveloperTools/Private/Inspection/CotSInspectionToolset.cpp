@@ -19,6 +19,8 @@
 #include "Curves/CurveFloat.h"
 #include "GameFramework/Actor.h"
 #include "Interfaces/IPluginManager.h"
+#include "Retargeter/IKRetargeter.h"
+#include "Rig/IKRigDefinition.h"
 #include "Misc/App.h"
 #include "Misc/EngineVersion.h"
 #include "Modules/ModuleManager.h"
@@ -346,6 +348,53 @@ FString UCotSInspectionToolset::GetAnimationAsset(const FString& ObjectPath)
         Result.Data->SetBoolField(TEXT("has_root_motion"), Sequence->HasRootMotion());
     }
     if (const UBlendSpace* BlendSpace = Cast<UBlendSpace>(Object)) { Result.Data->SetNumberField(TEXT("sample_count"), BlendSpace->GetNumberOfBlendSamples()); }
+    return Result.ToJson();
+}
+
+FString UCotSInspectionToolset::GetIKRetargeter(const FString& ObjectPath)
+{
+    UIKRetargeter* Retargeter = LoadObject<UIKRetargeter>(nullptr, *ObjectPath);
+    if (!Retargeter) { return InvalidPath(TEXT("CotS.Inspection.GetIKRetargeter"), ObjectPath).ToJson(); }
+
+    auto SetRig = [](TSharedPtr<FJsonObject>& Data, const TCHAR* Prefix, const UIKRigDefinition* Rig, const FName PoseName)
+    {
+        Data->SetStringField(FString::Printf(TEXT("%s_ik_rig"), Prefix), PathOf(Rig));
+        Data->SetStringField(FString::Printf(TEXT("%s_preview_mesh"), Prefix), Rig ? PathOf(Rig->GetPreviewMesh()) : FString());
+        Data->SetStringField(FString::Printf(TEXT("%s_root_bone"), Prefix), Rig ? Rig->GetRoot().ToString() : FString());
+        Data->SetStringField(FString::Printf(TEXT("%s_pelvis_bone"), Prefix), Rig ? Rig->GetPelvis().ToString() : FString());
+        Data->SetStringField(FString::Printf(TEXT("%s_pose"), Prefix), PoseName.ToString());
+        TArray<FString> Chains;
+        if (Rig)
+        {
+            for (const FBoneChain& Chain : Rig->GetRetargetChains())
+            {
+                Chains.Add(FString::Printf(TEXT("%s:%s-%s"), *Chain.ChainName.ToString(), *Chain.StartBone.BoneName.ToString(), *Chain.EndBone.BoneName.ToString()));
+            }
+        }
+        Chains.Sort();
+        Data->SetArrayField(FString::Printf(TEXT("%s_chains"), Prefix), Strings(Chains));
+    };
+
+    constexpr const TCHAR* Operation = TEXT("CotS.Inspection.GetIKRetargeter");
+    FCotSOperationResult Result = FCotSOperationResult::Succeed(Operation);
+    Result.AddAffectedObject(PathOf(Retargeter));
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("object_path"), PathOf(Retargeter));
+    Result.Data->SetBoolField(TEXT("has_source_ik_rig"), Retargeter->HasSourceIKRig());
+    Result.Data->SetBoolField(TEXT("has_target_ik_rig"), Retargeter->HasTargetIKRig());
+
+    const ERetargetSourceOrTarget Source = ERetargetSourceOrTarget::Source;
+    const ERetargetSourceOrTarget Target = ERetargetSourceOrTarget::Target;
+    SetRig(Result.Data, TEXT("source"), Retargeter->GetIKRig(Source), Retargeter->GetCurrentRetargetPoseName(Source));
+    SetRig(Result.Data, TEXT("target"), Retargeter->GetIKRig(Target), Retargeter->GetCurrentRetargetPoseName(Target));
+
+    TArray<FString> Operations;
+    for (const FInstancedStruct& RetargetOp : Retargeter->GetRetargetOps())
+    {
+        if (const UScriptStruct* Type = RetargetOp.GetScriptStruct()) { Operations.Add(Type->GetPathName()); }
+    }
+    Operations.Sort();
+    Result.Data->SetArrayField(TEXT("operation_types"), Strings(Operations));
     return Result.ToJson();
 }
 

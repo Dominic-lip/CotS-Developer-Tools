@@ -130,12 +130,37 @@ Inspection toolset; it does not claim to author or retarget animation assets.
   7.5666666030883789`, `sampled_keys: 228`, `is_looping: false`, and
   `has_root_motion: false`, with no warnings or errors.
 
+## Fourth increment: UE 5.8 IK Retargeter inspection
+
+`UCotSInspectionToolset::GetIKRetargeter(ObjectPath)` adds the next
+read-only TASK-013 slice using UE 5.8's public `IKRig` runtime API. It reports
+the exact retargeter path; whether source and target rigs are assigned; each
+side's assigned rig, preview mesh, root/pelvis bones, current pose, and sorted
+retarget-chain descriptions; plus sorted operation-stack struct paths. It
+uses only `UIKRetargeter::GetIKRig`, `GetCurrentRetargetPoseName`, and
+`GetRetargetOps`, and `UIKRigDefinition` read accessors. It deliberately does
+not use the `IKRigEditor` batch-retarget API or any controller/writeable
+accessor.
+
+- The plugin descriptor now declares its `IKRig` dependency alongside the
+  module dependency, eliminating Unreal's undeclared-plugin warning.
+- The existing `CotS.Inspection.SkeletonCompatibility` automation test now
+  creates an unsaved transient `UIKRetargeter` only, inspects it by exact
+  object path, and verifies the typed response reports no assigned source or
+  target rig. This exercises the actual public API without creating or saving
+  a ToolLab content asset.
+- Canonical `Build-ToolLab.cmd` succeeded after compiling the shared plugin
+  module (`Result: Succeeded`, exit 0). Fixed Host
+  `RunCotSAutomation` operation `36dc9455-2e9e-4ee4-841c-d749315ea79d`
+  returned exit 0. The Host mutation lock was acquired and released under
+  `supervisor-task-013`; ToolLab remained closed.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
   locomotion content or to check compatibility against it).
-- Implement retarget asset inspect/batch, Blend Space create/configure,
+- Implement retarget batch, Blend Space create/configure,
   AnimBP/state-machine create/configure, root-motion/IK policy checks,
   locomotion validation and test running. (Skeleton compatibility inspection
   and duplicate-name detection — via the pre-existing `FindDuplicateNames` —

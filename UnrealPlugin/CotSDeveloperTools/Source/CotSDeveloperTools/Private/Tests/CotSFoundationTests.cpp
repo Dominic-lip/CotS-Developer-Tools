@@ -5,6 +5,7 @@
 #include "Lifecycle/CotSLifecycleToolset.h"
 #include "Mutation/CotSMutationToolset.h"
 #include "Validation/CotSValidationToolset.h"
+#include "Retargeter/IKRetargeter.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Curves/CurveFloat.h"
 #include "Misc/AutomationTest.h"
@@ -183,6 +184,14 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TSharedPtr<FJsonObject> MissingJson;
     TestTrue(TEXT("Nonexistent object path returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetSkeletonCompatibility(TEXT("/Game/Characters/Mannequins/Meshes/Missing.Missing"), FString())), MissingJson));
     TestFalse(TEXT("Nonexistent object path fails cleanly"), MissingJson.IsValid() && MissingJson->GetBoolField(TEXT("success")));
+
+    UIKRetargeter* RetargeterFixture = NewObject<UIKRetargeter>(GetTransientPackage(), TEXT("CotSRetargeterInspectionFixture"));
+    TSharedPtr<FJsonObject> RetargeterJson;
+    TestTrue(TEXT("Transient IK Retargeter inspection returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetIKRetargeter(RetargeterFixture->GetPathName())), RetargeterJson));
+    TestTrue(TEXT("Transient IK Retargeter inspection succeeds"), RetargeterJson.IsValid() && RetargeterJson->GetBoolField(TEXT("success")));
+    const TSharedPtr<FJsonObject> RetargeterData = RetargeterJson->GetObjectField(TEXT("data"));
+    TestFalse(TEXT("New Retargeter has no source rig"), RetargeterData->GetBoolField(TEXT("has_source_ik_rig")));
+    TestFalse(TEXT("New Retargeter has no target rig"), RetargeterData->GetBoolField(TEXT("has_target_ik_rig")));
     return true;
 }
 
