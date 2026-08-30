@@ -9,6 +9,7 @@
 #include "AnimGraphNode_StateMachine.h"
 #include "AnimGraphNode_SequencePlayer.h"
 #include "AnimGraphNode_StateResult.h"
+#include "AnimGraphNode_Root.h"
 #include "AnimStateEntryNode.h"
 #include "AnimStateNode.h"
 #include "AnimStateTransitionNode.h"
@@ -567,6 +568,41 @@ FString UCotSMutationToolset::SetDisposableAnimBlueprintStateSequence(const FStr
     Result.Data->SetBoolField(TEXT("result_wired"), PoseOutput->LinkedTo.Contains(ResultInput));
     Result.Validation.Add(TEXT("inspect State Machine before AnimGraph output wiring or compilation"));
     return Finish(Result, true, false, TEXT("State content authoring is graph-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::WireDisposableAnimBlueprintStateMachineOutput(const FString& ObjectPath, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.WireDisposableAnimBlueprintStateMachineOutput");
+    if (!IsDisposableAssetPath(ObjectPath)) { return FCotSOperationResult::Fail(Op, TEXT("outside_disposable_scope"), TEXT("AnimGraph output wiring is restricted to /Game/CotSMutationLive/ exact object paths."), bDryRun).ToJson(); }
+    UAnimBlueprint* Blueprint = Cast<UAnimBlueprint>(LoadExactAsset(ObjectPath));
+    if (!Blueprint) { return FCotSOperationResult::Fail(Op, TEXT("animblueprint_not_found"), TEXT("ObjectPath must resolve to a UAnimBlueprint asset."), bDryRun).ToJson(); }
+    UAnimationGraph* AnimGraph = nullptr;
+    for (UEdGraph* Graph : Blueprint->FunctionGraphs) { if (UAnimationGraph* Candidate = Cast<UAnimationGraph>(Graph)) { AnimGraph = Candidate; break; } }
+    if (!AnimGraph) { return FCotSOperationResult::Fail(Op, TEXT("animation_graph_not_found"), TEXT("The AnimBlueprint has no editable UAnimationGraph."), bDryRun).ToJson(); }
+    TArray<UAnimGraphNode_Base*> Machines;
+    AnimGraph->GetGraphNodesOfClass(UAnimGraphNode_StateMachine::StaticClass(), Machines, true);
+    TArray<UAnimGraphNode_Root*> Roots;
+    AnimGraph->GetNodesOfClass(Roots);
+    UAnimGraphNode_StateMachine* Machine = Machines.Num() == 1 ? Cast<UAnimGraphNode_StateMachine>(Machines[0]) : nullptr;
+    UAnimGraphNode_Root* Root = Roots.Num() == 1 ? Roots[0] : nullptr;
+    if (!Machine || !Root) { return FCotSOperationResult::Fail(Op, TEXT("animgraph_topology_not_ready"), TEXT("The AnimBlueprint must contain exactly one State Machine and one AnimGraph Root."), bDryRun).ToJson(); }
+    UEdGraphPin* MachineOutput = Machine->FindPin(TEXT("Pose"), EGPD_Output);
+    UEdGraphPin* RootInput = Root->FindPin(TEXT("Result"), EGPD_Input);
+    if (!MachineOutput || !RootInput) { return FCotSOperationResult::Fail(Op, TEXT("pose_pins_not_found"), TEXT("The State Machine or AnimGraph Root lacks its expected public Pose/Result pin."), bDryRun).ToJson(); }
+    FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath);
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("animation_graph"), AnimGraph->GetPathName());
+    Result.Data->SetStringField(TEXT("root_node"), Root->GetPathName());
+    if (RootInput->LinkedTo.Contains(MachineOutput)) { Result.Validation.Add(TEXT("already_wired_to_state_machine")); return Finish(Result, false, false, TEXT("AnimGraph output wiring is graph-backed and not transaction-backed.")); }
+    if (RootInput->LinkedTo.Num() > 0) { return FCotSOperationResult::Fail(Op, TEXT("animgraph_output_already_wired"), TEXT("The AnimGraph Root is already wired to a different pose producer."), bDryRun).ToJson(); }
+    if (bDryRun) { Result.Validation.Add(TEXT("validated_single_state_machine_to_root_wiring")); return Finish(Result, true, false, TEXT("AnimGraph output wiring is graph-backed and not transaction-backed.")); }
+    Blueprint->Modify();
+    AnimGraph->Modify();
+    MachineOutput->MakeLinkTo(RootInput);
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    Result.Data->SetBoolField(TEXT("root_wired"), RootInput->LinkedTo.Contains(MachineOutput));
+    Result.Validation.Add(TEXT("compile with CotS.Mutation.CompileBlueprint before saving"));
+    return Finish(Result, true, false, TEXT("AnimGraph output wiring is graph-backed and not transaction-backed."));
 }
 
 FString UCotSMutationToolset::AddLocomotionBlendSpaceSample(const FString& BlendSpacePath, const FString& AnimationPath, double Speed, double Direction, bool bDryRun)

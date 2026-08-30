@@ -228,6 +228,10 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TestTrue(TEXT("Disposable State sequence dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::SetDisposableAnimBlueprintStateSequence(TEXT("/Game/CotSMutationLive/ABP_Missing.ABP_Missing"), TEXT("Idle"), IdlePath, false, true)), SequenceGuardJson));
     TestFalse(TEXT("Disposable State sequence dry-run rejects a missing AnimBlueprint"), SequenceGuardJson.IsValid() && SequenceGuardJson->GetBoolField(TEXT("success")));
 
+    TSharedPtr<FJsonObject> OutputWireGuardJson;
+    TestTrue(TEXT("Disposable AnimGraph output dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::WireDisposableAnimBlueprintStateMachineOutput(TEXT("/Game/CotSMutationLive/ABP_Missing.ABP_Missing"), true)), OutputWireGuardJson));
+    TestFalse(TEXT("Disposable AnimGraph output dry-run rejects a missing AnimBlueprint"), OutputWireGuardJson.IsValid() && OutputWireGuardJson->GetBoolField(TEXT("success")));
+
     TSharedPtr<FJsonObject> LocomotionPolicyJson;
     TestTrue(TEXT("Locomotion policy validation returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSValidationToolset::ValidateLocomotionPolicy(SkeletonPath, {}, { IdlePath }, { TEXT("root"), TEXT("pelvis"), TEXT("ik_foot_l"), TEXT("ik_foot_r") }, false)), LocomotionPolicyJson));
     TestTrue(TEXT("Imported idle passes the non-looping, in-place, required-IK-bones policy"), LocomotionPolicyJson.IsValid() && LocomotionPolicyJson->GetBoolField(TEXT("success")));

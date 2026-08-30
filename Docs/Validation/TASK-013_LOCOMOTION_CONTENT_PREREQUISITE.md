@@ -349,6 +349,24 @@ Host `RunCotSAutomation` operation `6cf663bf-1d0f-47a0-8b03-980e7b44d670`
 returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
 CODE: 0`. The Host lock was released under `supervisor-task-013`.
 
+## Fourteenth increment: guarded AnimGraph Root wiring
+
+`UCotSMutationToolset::WireDisposableAnimBlueprintStateMachineOutput` wires
+the single disposable State Machine's public `Pose` output to the
+factory-supplied AnimGraph Root's public `Result` input. It requires exactly
+one `UAnimationGraph`, State Machine, and Root; it reports a no-change when
+already wired and refuses an existing conflicting output producer. This
+completes the graph topology needed for a later explicit compilation boundary.
+
+The operation deliberately does not create transition-rule logic, compile, or
+save. The focused test proves a missing disposable AnimBlueprint is rejected
+before graph mutation.
+
+Canonical `Build-ToolLab.cmd` succeeded (`Result: Succeeded`, exit 0). Fixed
+Host `RunCotSAutomation` operation `c65da073-6080-43a8-90a9-39c754ec435b`
+returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
+CODE: 0`. The Host lock was released under `supervisor-task-013`.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
@@ -357,8 +375,8 @@ CODE: 0`. The Host lock was released under `supervisor-task-013`.
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof; provide a valid
   exact-skeleton preview mesh and create/inspect/clean up the guarded Blend
-  Space; add transition rule logic to a created AnimBP, wire the AnimGraph
-  output, compile and inspect it; apply the
+  Space; add transition rule logic to a created AnimBP, compile and inspect
+  it; apply the
   root-motion/IK policy to the complete locomotion set and run its test,
   AnimBP/state-machine create/configure, root-motion/IK policy checks,
   locomotion validation and test running. (Skeleton compatibility inspection
