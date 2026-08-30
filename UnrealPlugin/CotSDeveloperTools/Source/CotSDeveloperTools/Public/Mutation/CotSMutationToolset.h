@@ -21,6 +21,7 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString SaveAsset(const FString& ObjectPath, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString SetCurveEventFlag(const FString& ObjectPath, bool bIsEventCurve, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString CompileBlueprint(const FString& ObjectPath, bool bDryRun = false);
+    UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString CreateDisposableMap(const FString& MapAssetPath, bool bDryRun = false);
 
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString CreateDisposableActor(const FString& ActorLabel, double X, double Y, double Z, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString SetActorLocation(const FString& ActorPath, double X, double Y, double Z, bool bDryRun = false);

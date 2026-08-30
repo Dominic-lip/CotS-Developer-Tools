@@ -6,6 +6,7 @@
 #include "Dom/JsonObject.h"
 #include "Editor.h"
 #include "Engine/Blueprint.h"
+#include "EngineUtils.h"
 #include "Engine/SCS_Node.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SimpleConstructionScript.h"
@@ -21,6 +22,7 @@
 #include "Misc/EngineVersion.h"
 #include "Modules/ModuleManager.h"
 #include "UObject/SoftObjectPath.h"
+#include "UObject/UnrealType.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CotSInspectionToolset)
 
@@ -89,6 +91,16 @@ FString DependencyKind(const FAssetDependency& Dependency)
 {
     if (Dependency.Category != EDependencyCategory::Package) { return TEXT("non_package"); }
     return EnumHasAnyFlags(Dependency.Properties, EDependencyProperty::Hard) ? TEXT("hard") : TEXT("soft");
+}
+
+bool IsIdentifier(const FString& Value)
+{
+    if (Value.IsEmpty()) { return false; }
+    for (const TCHAR Character : Value)
+    {
+        if (!FChar::IsAlnum(Character) && Character != TEXT('_')) { return false; }
+    }
+    return true;
 }
 }
 
@@ -170,6 +182,75 @@ FString UCotSInspectionToolset::GetActor(const FString& ActorPath)
     TArray<TSharedPtr<FJsonValue>> Components;
     for (UActorComponent* Component : Actor->GetComponents()) { if (Component) { Components.Add(MakeShared<FJsonValueString>(Component->GetPathName())); } }
     Result.Data->SetArrayField(TEXT("components"), Components); return Result.ToJson();
+}
+
+FString UCotSInspectionToolset::ListPIEActors()
+{
+    constexpr const TCHAR* Operation = TEXT("CotS.Inspection.ListPIEActors");
+    if (!GEditor || !GEditor->PlayWorld)
+    {
+        return FCotSOperationResult::Fail(Operation, TEXT("pie_not_running"), TEXT("No active Play-In-Editor world is available.")).ToJson();
+    }
+    TArray<AActor*> Actors;
+    for (TActorIterator<AActor> It(GEditor->PlayWorld); It; ++It) { Actors.Add(*It); }
+    Actors.Sort([](const AActor& Left, const AActor& Right) { return Left.GetPathName() < Right.GetPathName(); });
+
+    FCotSOperationResult Result = FCotSOperationResult::Succeed(Operation);
+    Result.Data = MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> Items;
+    for (const AActor* Actor : Actors)
+    {
+        TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
+        Item->SetStringField(TEXT("actor_path"), Actor->GetPathName());
+        Item->SetStringField(TEXT("label"), Actor->GetActorLabel());
+        Item->SetStringField(TEXT("class"), Actor->GetClass()->GetPathName());
+        Items.Add(MakeShared<FJsonValueObject>(Item));
+    }
+    Result.Data->SetArrayField(TEXT("actors"), Items);
+    return Result.ToJson();
+}
+
+FString UCotSInspectionToolset::GetPIEActorFloatProperty(const FString& ActorSelector, const FString& PropertyName)
+{
+    constexpr const TCHAR* Operation = TEXT("CotS.Inspection.GetPIEActorFloatProperty");
+    if (!IsIdentifier(PropertyName))
+    {
+        return FCotSOperationResult::Fail(Operation, TEXT("invalid_property_name"), TEXT("PropertyName must contain only letters, digits, or underscores.")).ToJson();
+    }
+    if (!GEditor || !GEditor->PlayWorld)
+    {
+        return FCotSOperationResult::Fail(Operation, TEXT("pie_not_running"), TEXT("No active Play-In-Editor world is available.")).ToJson();
+    }
+
+    AActor* Match = nullptr;
+    for (TActorIterator<AActor> It(GEditor->PlayWorld); It; ++It)
+    {
+        if (It->GetPathName() != ActorSelector && It->GetActorLabel() != ActorSelector && It->GetClass()->GetPathName() != ActorSelector && It->GetClass()->GetName() != ActorSelector) { continue; }
+        if (Match)
+        {
+            return FCotSOperationResult::Fail(Operation, TEXT("ambiguous_actor_selector"), TEXT("More than one PIE actor matches the requested path, label, class path, or class name.")).ToJson();
+        }
+        Match = *It;
+    }
+    if (!Match)
+    {
+        return FCotSOperationResult::Fail(Operation, TEXT("actor_not_found"), TEXT("No PIE actor matches the requested path, label, class path, or class name.")).ToJson();
+    }
+
+    const FFloatProperty* Property = FindFProperty<FFloatProperty>(Match->GetClass(), FName(*PropertyName));
+    if (!Property)
+    {
+        return FCotSOperationResult::Fail(Operation, TEXT("float_property_not_found"), TEXT("The requested property does not exist or is not a float.")).ToJson();
+    }
+
+    FCotSOperationResult Result = FCotSOperationResult::Succeed(Operation);
+    Result.AddAffectedObject(Match->GetPathName());
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("actor_path"), Match->GetPathName());
+    Result.Data->SetStringField(TEXT("actor_selector"), ActorSelector);
+    Result.Data->SetStringField(TEXT("property_name"), PropertyName);
+    Result.Data->SetNumberField(TEXT("value"), Property->GetPropertyValue_InContainer(Match));
+    return Result.ToJson();
 }
 
 FString UCotSInspectionToolset::GetReferences(const FString& ObjectPath, bool bReferencers)

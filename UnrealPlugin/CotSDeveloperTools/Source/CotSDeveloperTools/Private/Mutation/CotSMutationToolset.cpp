@@ -9,6 +9,7 @@
 #include "Dom/JsonObject.h"
 #include "Editor.h"
 #include "EditorAssetLibrary.h"
+#include "FileHelpers.h"
 #include "Engine/Blueprint.h"
 #include "EngineUtils.h"
 #include "EngineUtils.h"
@@ -24,6 +25,7 @@
 namespace
 {
 constexpr TCHAR DisposableRoot[] = TEXT("/Game/CotSMutationLive/");
+constexpr TCHAR ProofMapRoot[] = TEXT("/Game/CotSAutonomousProof/");
 constexpr TCHAR DisposableActorPrefix[] = TEXT("CotSMutation_");
 
 void SetDetails(FCotSOperationResult& Result, bool bChanged, bool bUndoable, const FString& Note = FString())
@@ -42,6 +44,13 @@ bool IsExactGameObjectPath(const FString& Path)
     const FString ObjectName = FPackageName::ObjectPathToObjectName(Path);
     return FPackageName::IsValidLongPackageName(PackageName, false) && !ObjectName.IsEmpty()
         && Path.Equals(PackageName + TEXT(".") + ObjectName, ESearchCase::CaseSensitive);
+}
+
+bool IsDisposableMapPath(const FString& Path)
+{
+    return Path.StartsWith(ProofMapRoot, ESearchCase::CaseSensitive)
+        && FPackageName::IsValidLongPackageName(Path, false)
+        && !Path.Contains(TEXT("."));
 }
 
 FString Finish(FCotSOperationResult& Result, bool bChanged, bool bUndoable, const FString& Note = FString())
@@ -170,6 +179,31 @@ FString UCotSMutationToolset::CompileBlueprint(const FString& ObjectPath, bool b
     UBlueprint* Blueprint = Cast<UBlueprint>(LoadExactAsset(ObjectPath)); if (!Blueprint) { return FCotSOperationResult::Fail(Op, TEXT("unsupported_blueprint_target"), TEXT("Exact path does not resolve to UBlueprint."), bDryRun).ToJson(); }
     FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath); if (bDryRun) { Result.Validation.Add(TEXT("blueprint_target_validated")); return Finish(Result, false, false, TEXT("Blueprint compilation is not represented as a user undo transaction.")); }
     FKismetEditorUtilities::CompileBlueprint(Blueprint); Result.Data = MakeShared<FJsonObject>(); Result.Data->SetNumberField(TEXT("compile_status"), static_cast<uint8>(Blueprint->Status)); Result.Data->SetBoolField(TEXT("compiled_up_to_date"), Blueprint->IsUpToDate()); Result.Data->SetBoolField(TEXT("transaction_undo_available"), false); Result.Validation.Add(TEXT("re-inspect with CotS.Inspection.GetBlueprint")); return Result.ToJson();
+}
+
+FString UCotSMutationToolset::CreateDisposableMap(const FString& MapAssetPath, bool bDryRun)
+{
+    const FString Op = TEXT("CotS.Mutation.CreateDisposableMap");
+    if (!IsDisposableMapPath(MapAssetPath))
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("invalid_disposable_map_path"), TEXT("MapAssetPath must be a /Game/CotSAutonomousProof/ package path without an object suffix."), bDryRun).ToJson();
+    }
+    FCotSOperationResult Result = Start(Op, bDryRun, MapAssetPath);
+    if (FPackageName::DoesPackageExist(MapAssetPath))
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("destination_collision"), TEXT("A map package already exists at the requested path."), bDryRun).ToJson();
+    }
+    if (bDryRun) { Result.Validation.Add(TEXT("validated_disposable_map_target")); return Finish(Result, true, false, TEXT("Map creation and saving are package-backed and not transaction-backed.")); }
+    UWorld* World = UEditorLoadingAndSavingUtils::NewBlankMap(false);
+    if (!World || !UEditorLoadingAndSavingUtils::SaveMap(World, MapAssetPath))
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("map_create_failed"), TEXT("UE could not create and save the disposable map.")).ToJson();
+    }
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("map_path"), MapAssetPath);
+    Result.Data->SetStringField(TEXT("world_path"), World->GetPathName());
+    Result.Validation.Add(TEXT("load the exact map path before placing proof actors"));
+    return Finish(Result, true, false, TEXT("Map creation and saving are package-backed and not transaction-backed."));
 }
 
 FString UCotSMutationToolset::CreateDisposableActor(const FString& ActorLabel, double X, double Y, double Z, bool bDryRun)

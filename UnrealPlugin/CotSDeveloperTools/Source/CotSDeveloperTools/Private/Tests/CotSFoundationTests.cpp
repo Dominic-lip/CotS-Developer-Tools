@@ -144,6 +144,12 @@ bool FCotSInspectionExactPathTest::RunTest(const FString& Parameters)
     const TArray<TSharedPtr<FJsonValue>>* Referencers = nullptr;
     TestTrue(TEXT("Zero-referencer query succeeds with an empty collection"), ReferencersJson.IsValid() && ReferencersJson->GetBoolField(TEXT("success")) && ReferencersJson->GetObjectField(TEXT("data"))->TryGetArrayField(TEXT("referencers"), Referencers) && Referencers && Referencers->IsEmpty());
 
+    TSharedPtr<FJsonObject> PieJson;
+    TestTrue(TEXT("PIE inspection preflight returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetPIEActorFloatProperty(TEXT("NoActor"), TEXT("RuntimeValue"))), PieJson));
+    TestFalse(TEXT("PIE inspection refuses outside PIE"), PieJson.IsValid() && PieJson->GetBoolField(TEXT("success")));
+    const FString InspectionSchema = UToolsetRegistry::GetToolsetJsonSchema(UCotSInspectionToolset::StaticClass());
+    TestTrue(TEXT("Inspection schema exposes typed PIE inventory and float readers"), InspectionSchema.Contains(TEXT("ListPIEActors")) && InspectionSchema.Contains(TEXT("GetPIEActorFloatProperty")));
+
     FAssetRegistryModule::AssetDeleted(AssetA);
     FAssetRegistryModule::AssetDeleted(AssetB);
     return true;
@@ -154,7 +160,7 @@ bool FCotSMutationRegistrationTest::RunTest(const FString& Parameters)
 {
     TestTrue(TEXT("Mutation toolset is registered"), UToolsetRegistry::IsToolsetClassRegistered(UCotSMutationToolset::StaticClass()));
     const FString Schema = UToolsetRegistry::GetToolsetJsonSchema(UCotSMutationToolset::StaticClass());
-    TestTrue(TEXT("Mutation schema exposes preview-capable asset move"), Schema.Contains(TEXT("MoveAsset")) && Schema.Contains(TEXT("bDryRun")));
+    TestTrue(TEXT("Mutation schema exposes preview-capable asset move and disposable map creation"), Schema.Contains(TEXT("MoveAsset")) && Schema.Contains(TEXT("CreateDisposableMap")) && Schema.Contains(TEXT("bDryRun")));
     return true;
 }
 

@@ -19,6 +19,10 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetAsset(const FString& ObjectPath);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetCurveFloat(const FString& ObjectPath);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetActor(const FString& ActorPath);
+    /** Lists exact runtime actor paths, labels, and classes from the active PIE world. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString ListPIEActors();
+    /** Reads one named float property from exactly one PIE actor selected by exact path, label, generated-class path, or class name. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetPIEActorFloatProperty(const FString& ActorSelector, const FString& PropertyName);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetReferences(const FString& ObjectPath, bool bReferencers);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetBlueprint(const FString& ObjectPath);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetAnimationAsset(const FString& ObjectPath);
