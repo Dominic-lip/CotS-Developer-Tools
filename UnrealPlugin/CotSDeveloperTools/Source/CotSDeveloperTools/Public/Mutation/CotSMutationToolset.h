@@ -25,6 +25,8 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString AddLocomotionBlendSpaceSample(const FString& BlendSpacePath, const FString& AnimationPath, double Speed, double Direction, bool bDryRun = false);
     /** Creates a disposable AnimBlueprint asset after exact Skeleton/preview-mesh preflight; graph topology remains an explicit subsequent operation. */
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString CreateDisposableAnimBlueprint(const FString& ObjectPath, const FString& SkeletonPath, const FString& PreviewMeshPath, bool bDryRun = false);
+    /** Adds one default-initialized State Machine to an exact disposable AnimBlueprint; state and transition authoring remains explicit. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString AddDisposableAnimBlueprintStateMachine(const FString& ObjectPath, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString DeleteDisposableAsset(const FString& ObjectPath, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString SaveAsset(const FString& ObjectPath, bool bDryRun = false);
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString SetCurveEventFlag(const FString& ObjectPath, bool bIsEventCurve, bool bDryRun = false);

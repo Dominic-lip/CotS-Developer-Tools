@@ -268,6 +268,26 @@ Host `RunCotSAutomation` operation `16189380-1899-4b14-a7cb-501de9f5bdae`
 returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
 CODE: 0`. The Host lock was released under `supervisor-task-013`.
 
+## Tenth increment: guarded AnimBlueprint State Machine authoring
+
+`UCotSMutationToolset::AddDisposableAnimBlueprintStateMachine` accepts only
+an existing exact-path `UAnimBlueprint` under `/Game/CotSMutationLive/`. It
+locates the Blueprint's factory-supplied `UAnimationGraph` and uses UE 5.8's
+public `FGraphNodeCreator<UAnimGraphNode_StateMachine>` lifecycle. That calls
+the engine node's normal initialization, including its owned
+`UAnimationStateMachineGraph` and default entry node. The operation is
+idempotent: an existing machine is reported without further mutation.
+
+It intentionally creates neither state nodes nor transitions, does not wire
+the State Machine to an AnimGraph output, and does not compile or save. Those
+are separate correctness boundaries. The focused test proves a missing
+disposable AnimBlueprint is rejected before any graph mutation.
+
+Canonical `Build-ToolLab.cmd` succeeded (`Result: Succeeded`, exit 0). Fixed
+Host `RunCotSAutomation` operation `555b6bbf-fb66-4769-91fb-0201af316e4c`
+returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
+CODE: 0`. The Host lock was released under `supervisor-task-013`.
+
 ## Remaining work (not done here)
 
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
@@ -276,7 +296,7 @@ CODE: 0`. The Host lock was released under `supervisor-task-013`.
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof; provide a valid
   exact-skeleton preview mesh and create/inspect/clean up the guarded Blend
-  Space; configure a created AnimBP with a state machine and transitions,
+  Space; add State Machine states and transitions to a created AnimBP, wire,
   compile and inspect it; apply the
   root-motion/IK policy to the complete locomotion set and run its test,
   AnimBP/state-machine create/configure, root-motion/IK policy checks,
