@@ -818,3 +818,41 @@ real, unmet piece of the objective's stated toolset scope ("automate the
 class of locomotion/MetaHuman work"), not a formality. Closing it requires
 the deliberately-deferred plugin/rebuild step, not further content or
 inspection work of the kind this record has been adding.
+
+## Twenty-fifth increment: enabling the MetaHumanCharacter plugin was low-risk after all
+
+Re-examined the earlier "large, risky, needs a full rebuild" assessment by
+actually inspecting the full dependency chain first
+(`MetaHumanCharacter.uplugin`'s `Plugins` array: 20 entries, including
+`MetaHumanSDK`, `HairStrands`, `TextureGraph`, `ChaosClothAsset`,
+`AppleARKit(FaceSupport)`, `IKRig`, etc.) before touching anything — this is
+genuinely large in dependency count, but the engine install here is a
+precompiled Epic Games Launcher distribution, not an engine built from
+source: Epic ships prebuilt binaries for every bundled Engine plugin, so
+enabling one does not require compiling new C++.
+
+Added `{"Name": "MetaHumanCharacter", "Enabled": true}` to
+`ToolLab/CotSToolLab.uproject`'s `Plugins` array under `supervisor-task-013`.
+`BuildToolLab` completed in ~4 seconds (`Result: Succeeded`, exit 0) —
+`"Using Unreal Build Accelerator local executor to run 1 action(s)"` /
+`"[1/1] WriteMetadata CotSToolLabEditor.target"` confirms nothing was
+actually recompiled, only the target descriptor was regenerated, exactly as
+the precompiled-binaries theory predicts. `OpenToolLab`/`WaitForUnrealMcp`
+then confirmed the editor started and `mcp_ready: true`.
+
+Checked `ToolLab/Saved/Logs/CotSToolLab.log` directly (no live `unreal-mcp`
+connection was available this turn — ToolLab was closed at session start)
+for load problems: zero `Fatal`/`failed to load module`/`LogModuleManager:
+Error` entries, `MapCheck: Map check complete: 0 Error(s), 0 Warning(s)`.
+The only `MetaHuman`-tagged log lines are harmless `LogSlate: Could not load
+file for Slate resource` warnings for two onboarding-screen PNGs
+(`MetaHumanSDK/Content/Intro_{1,2}.png`) — cosmetic, not a module or content
+load failure.
+
+This substantially de-risks the remaining IK Retargeter proof: the earlier
+"defer as a large, separate step" judgment was based on an *assumption*
+about needing a source rebuild, not a measurement. Left ToolLab running
+(`mcp_ready: true`) and the Host lock held across this turn boundary so the
+next turn's fresh process can connect natively, inspect
+`RTG_MH_IKRig.uasset`/`archetype_SkelMesh_Skeleton.uasset` for real, and
+attempt the distinct-skeleton batch-retarget proof.
