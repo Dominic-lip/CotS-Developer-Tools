@@ -542,21 +542,91 @@ This directly closes "create/configure Animation Blueprints/state machines"
 against real content — the first fully compiled, real-content locomotion
 AnimBlueprint produced by either agent this task.
 
+**Correction from the twentieth increment below**: "compiles without errors"
+is true but was not sufficient evidence that the state machine actually
+*works*. A subsequent PIE run surfaced compiler warnings that this increment's
+own inspection calls did not surface (`CompileBlueprint`'s and `GetBlueprint`'s
+JSON both reported an empty `warnings` array despite real compiler warnings
+being logged) — the transition rules as set do not actually function. Treat
+this increment as "produces a compiling AnimBlueprint asset with the intended
+topology," not "produces a working locomotion state machine."
+
+## Twentieth increment: live PIE run reveals a real transition-rule defect
+
+Attempted the literal "runs the test" clause: spawned an `ASkeletalMeshActor`,
+assigned `skeletalMeshAsset=SKM_Quinn_Simple`, `animationMode=AnimationBlueprint`,
+`animClass=ABP_LocomotionProof_C` (found via `ObjectTools.list_properties` —
+UE5.8 renamed the mesh property to `skeletalMeshAsset`), and ran PIE.
+
+**First attempt placed the actor in `/Temp/Untitled_1`** (the level open at
+turn start) and it did not appear in `ListPIEActors` at all. Investigation
+showed `/Temp/Untitled_1` is actually a large World Partition map (landscape,
+sky, dozens of streaming-cell sublevels), not an empty scratch level — the
+actor likely landed in a cell that didn't stream into the brief PIE session.
+Switched to a purpose-built disposable map instead: `CreateDisposableMap`
+(note: its `MapAssetPath` must be exactly under `/Game/CotSAutonomousProof/`,
+not `/Game/CotSMutationLive/` — a second, different exact-scope restriction
+from the Blend Space/AnimBlueprint one) -> `/Game/CotSAutonomousProof/Maps/M_LocomotionProof`,
+loaded it, placed the actor there instead. `ListPIEActors` then correctly
+showed `LocomotionProofActor` (class `SkeletalMeshActor`) in the running PIE
+world, confirming the placement/assignment approach itself was correct.
+
+**The real finding**: re-reading `ToolLab/Saved/Logs/CotSToolLab.log` around
+the earlier `CompileBlueprint` call (from the prior increment, same session)
+showed compiler warnings that were never surfaced through the MCP call's own
+`warnings` field:
+
+```
+LogBlueprint: Warning: [AssetLog] .../ABP_LocomotionProof: [Compiler]
+  Idle to JumpStart  will never be taken, please connect something to  Can Enter Transition
+  (repeated for JumpStart->Falling, Falling->Landing, Landing->Idle)
+```
+
+Reading `SetDisposableAnimBlueprintTransitionRule`'s implementation
+(`UnrealPlugin/.../CotSMutationToolset.cpp`) confirms why: it writes
+`ResultNode->Node.bCanEnterTransition` directly on the compiled runtime
+struct via reflection, but `UAnimGraphNode_TransitionResult`'s boolean input
+is a real graph pin — Unreal's animation-transition-graph compiler generates
+its bytecode from pin connections (and pin `DefaultValue` strings), not from
+whatever a raw struct member holds after the fact, so an unconnected pin is
+compiled as "never true" regardless of the struct write succeeding. The tool
+call's own reported `after_can_enter_transition: true` is therefore true of
+the in-memory struct field at the moment it was set, but not of what the
+compiled/saved graph will actually evaluate at runtime.
+
+This is exactly the class of thing "run the test" is meant to catch that a
+"compiles without errors" claim can miss, and neither this task's nor the
+concurrent agent's own focused unit tests exercised it — their own
+documented test scope for this tool "proves a missing disposable
+AnimBlueprint is rejected before transition-rule mutation," not that a
+fully-wired transition actually fires. `ABP_LocomotionProof` is being kept
+committed as an accurate, useful reference of this real (if currently
+non-functional) topology, not as a working locomotion setup.
+
+Cleaned up the diagnostic map/actor: `AssetTools.delete` on
+`/Game/CotSAutonomousProof/Maps/M_LocomotionProof` after switching the
+loaded level away from it (delete on the currently-loaded level is a no-op);
+its `.umap` file remained on disk after that call reported `true` (an
+async-save artifact, not a registry inconsistency worth deeper investigation
+here), so it was removed directly via filesystem delete and confirmed absent
+from `git status` before committing.
+
 ## Remaining work (not done here)
 
-- Run the AnimBlueprint in an actual PIE session (spawn an actor with a
-  `SkeletalMeshComponent` using `SKM_Quinn_Simple` + this `AnimBlueprint`,
-  start PIE, observe state transitions, stop PIE) — this is the literal
-  "runs the test" clause of the acceptance test and was not attempted this
-  turn; the graph-compile proof above is necessary but not sufficient for
-  full acceptance.
+- **Fix `SetDisposableAnimBlueprintTransitionRule`** to set the transition
+  result pin's actual default value (e.g. via the pin's
+  `GetSchema()->TrySetDefaultValue`/`PC_Boolean` default-value string, or by
+  wiring a boolean literal `K2Node`) rather than the raw runtime struct
+  field, so `bCanEnterTransition=true` is honored by the compiler. Re-run
+  the same PIE proof afterward to confirm the state machine actually cycles
+  through all four states.
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
   locomotion content or to check compatibility against it).
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof.
 - Run the disposable-test-area acceptance test end-to-end and report exact
-  assets/results.
+  assets/results, once the transition-rule defect above is fixed.
 
 Status remains `PARTIAL`, not `COMPLETE_VERIFIED` — this record covers the
 content prerequisite plus most of the eight target capabilities; only the
