@@ -454,23 +454,65 @@ is a C++ function, not a directly `set_properties`-settable reflected field,
 so it needs a small new guarded CotS tool rather than a generic property
 set), are left for the next turn with a live connection.
 
+## Eighteenth increment: live Quinn-preview-mesh re-verification and real Blend Space authoring
+
+At the start of this Claude turn, ToolLab was already running (left open from
+the previous turn), so `unreal-mcp` connected natively at session start —
+resolving the deferred re-verification:
+
+- `AssetTools.exists("/Game/Characters/Mannequins/Meshes/SKM_Quinn_Simple")`
+  -> `true`; `get_asset_class` -> `"SkeletalMesh"`.
+- `AssetTools.get_dependencies` lists `CR_Mannequin_Body`/`PA_Mannequin` as
+  declared-but-absent (the deliberately skipped Manny sub-tree) alongside the
+  present `SK_Mannequin`/`MI_Quinn_01`/`MI_Quinn_02` — the call itself
+  succeeds with no error, confirming UE degrades missing soft references
+  gracefully rather than failing to enumerate dependencies.
+- `CotSInspectionToolset.GetAnimationAsset` **loads** the mesh
+  (`LoadObject`, not just an asset-registry query) and succeeds cleanly,
+  resolving `"skeleton": ".../SK_Mannequin.SK_Mannequin"` — proving the mesh
+  is usable despite its unmet PhysicsAsset/Control-Rig references.
+
+This also surfaced that no new preview-mesh-assignment tool was needed:
+`CreateDisposableLocomotionBlendSpace`/`CreateDisposableAnimBlueprint`
+(already implemented by a concurrent turn) both take an explicit
+`previewMeshPath` parameter rather than depending on the Skeleton's own
+`PreviewMesh` field, so the imported Quinn mesh could be passed directly.
+
+With that unblocked, ran the first real (non-dry-run) Blend Space authoring
+proof against genuine locomotion content, under `supervisor-task-013`:
+
+1. `CreateDisposableLocomotionBlendSpace` with `skeletonPath=SK_Mannequin`,
+   `previewMeshPath=SKM_Quinn_Simple`, target
+   `/Game/CotSMutationLive/BS_LocomotionProof.BS_LocomotionProof` -> success,
+   `speed_axis: "0..600"`, `direction_axis: "-180..180"`. (Note: the exact
+   object path must include the redundant `.AssetName` suffix — a bare
+   package path is rejected as `outside_disposable_scope`.)
+2. `AddLocomotionBlendSpaceSample` x5, all succeeded: `MM_Idle` at (0, 0),
+   `MF_Unarmed_Walk_Fwd` at (300, 0), `MF_Unarmed_Walk_Bwd` at (300, 180),
+   `MF_Unarmed_Walk_Left` at (300, -90), `MF_Unarmed_Walk_Right` at (300, 90).
+3. Independent re-inspection: `CotSInspectionToolset.GetAnimationAsset` on
+   the new Blend Space returned `"class": "BlendSpace"`,
+   `"skeleton": ".../SK_Mannequin.SK_Mannequin"`, `"sample_count": 5` —
+   matching all five additions.
+4. `SaveAsset` succeeded, then `DeleteDisposableAsset` cleaned it up (matching
+   the "disposable" naming and this doc's established pattern of proof-then-
+   cleanup rather than committing binary scratch assets); `AssetTools.exists`
+   confirmed `false` afterward.
+
+This is the first genuine (non-dry-run) exercise of the concurrently-built
+Blend Space authoring tools against real, non-disposable project content,
+directly closing the "create/configure Blend Spaces" target capability.
+
 ## Remaining work (not done here)
 
-- Re-verify the Quinn preview-mesh import natively (`AssetTools.exists`/
-  `get_dependencies`/`get_asset_class`) once a turn starts with ToolLab
-  already running.
-- Add a small guarded CotS mutation tool to assign a Skeleton's preview mesh
-  (wraps `USkeleton::SetPreviewMesh`), then use it to set `SK_Mannequin`'s
-  preview mesh to the imported `SKM_Quinn_Simple`.
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
   locomotion content or to check compatibility against it).
 - Configure a disposable IK Retargeter with a genuine distinct target and
-  perform/inspect/clean up a guarded batch retarget proof; create/inspect/
-  clean up the guarded Blend Space (now unblocked by the preview mesh);
-  compile and inspect a created AnimBP. (Skeleton compatibility inspection
-  and duplicate-name detection — via the pre-existing `FindDuplicateNames` —
-  are now covered.)
+  perform/inspect/clean up a guarded batch retarget proof.
+- Create a disposable AnimBlueprint (now unblocked by the same preview mesh),
+  wire a locomotion state machine using the existing state/transition/rule
+  tools, compile and inspect it.
 - Run the disposable-test-area acceptance test end-to-end and report exact
   assets/results.
 
