@@ -403,24 +403,72 @@ Host `RunCotSAutomation` operation `10b094cd-a0e4-4208-804a-02f64432b212`
 returned exit 0; the editor log records 13 CotS tests and `TEST COMPLETE. EXIT
 CODE: 0`. The Host lock was released under `supervisor-task-013`.
 
+## Seventeenth increment: verified Quinn preview-mesh content import
+
+Recursively scanned `SKM_Quinn_Simple.uasset`'s package strings (same
+offline, zero-risk binary-scan method used for the original locomotion
+import) to determine its real dependency closure before copying anything:
+
+- Direct references: `SK_Mannequin` (already imported), `MI_Quinn_01`,
+  `MI_Quinn_02` (material instances), `PA_Mannequin` (PhysicsAsset),
+  `CR_Mannequin_Body` (Control Rig).
+- `MI_Quinn_01`/`MI_Quinn_02` recursively require `M_Mannequin` (parent
+  material) and their own Quinn textures (`T_Quinn_01_{D,MRA,N}`,
+  `T_Quinn_02_{D,MRA,N}`).
+- `PA_Mannequin` and `CR_Mannequin_Body` both reference `SKM_Manny_Simple` —
+  a *different* skeletal mesh, not one we hold — opening a separate,
+  unverified dependency branch. `M_Mannequin` itself also has default
+  texture-parameter values pointing at Manny textures (`T_Manny_01_*`,
+  `T_UE_Logo_M`), used only as an unused fallback since the Quinn instances
+  override every relevant parameter.
+
+**Scope decision**: imported only the fully self-contained, verified subset
+needed for a valid preview *mesh* — `SKM_Quinn_Simple`, `M_Mannequin`,
+`MI_Quinn_01`, `MI_Quinn_02`, and the 6 Quinn textures (22 MB) — and
+deliberately did **not** import `PA_Mannequin`/`CR_Mannequin_Body` or the
+Manny default-parameter textures. A SkeletalMesh with an unassigned
+PhysicsAsset/Control-Rig and a material with an unused missing default
+texture parameter both load and render correctly in UE (missing physics/
+control-rig means no simulation/rig preview; a missing default-only texture
+parameter falls back to a checker/error texture only if nothing overrides
+it, which the Quinn instances already do) — neither blocks the intended use
+as a Skeleton preview mesh for Blend Space/AnimBP authoring. Chasing the
+Manny sub-tree further would be scope creep beyond what a preview mesh
+needs.
+
+Copied (preserving the original `/Game/Characters/Mannequins/...` relative
+path) under agent id `supervisor-task-013`: `AcquireMutationLock` (no editor
+was running, so no close/reopen cycle was needed for the copy itself),
+copied the 9 files, then `OpenToolLab`/`WaitForUnrealMcp` to force a fresh
+Asset Registry scan, and `ReleaseMutationLock`.
+
+**Verification performed**: `ToolLab/Saved/Logs/CotSToolLab.log` after the
+scan shows no Quinn/Mannequin-related entries under an `Error|Missing|Broken`
+grep, and `MapCheck: Map check complete: 0 Error(s), 0 Warning(s)`. This
+Claude turn's own `unreal-mcp` MCP client had already failed to connect at
+session start (ToolLab was closed then), so the live `AssetTools.exists`/
+`get_dependencies` confirmation used for the original Mannequin import could
+not be repeated in the same turn — that native re-verification, and actually
+assigning this mesh as the Skeleton's active preview mesh (`USkeleton::SetPreviewMesh`
+is a C++ function, not a directly `set_properties`-settable reflected field,
+so it needs a small new guarded CotS tool rather than a generic property
+set), are left for the next turn with a live connection.
+
 ## Remaining work (not done here)
 
-- The installed UE 5.8 template contains the exact missing companion package
-  `Templates/TemplateResources/High/Characters/Content/Mannequins/Meshes/SKM_Quinn_Simple.uasset`.
-  Its package strings reference the imported
-  `/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin` Skeleton, so
-  it is the bounded preview-mesh candidate. Its direct template dependencies
-  include Quinn material instances plus Control Rig and Physics assets; none
-  are copied here. A future native Unreal MCP asset-import operation must
-  import and inspect the exact mesh (and any required dependency closure)
-  before Blend Space or AnimBlueprint authoring claims are made.
+- Re-verify the Quinn preview-mesh import natively (`AssetTools.exists`/
+  `get_dependencies`/`get_asset_class`) once a turn starts with ToolLab
+  already running.
+- Add a small guarded CotS mutation tool to assign a Skeleton's preview mesh
+  (wraps `USkeleton::SetPreviewMesh`), then use it to set `SK_Mannequin`'s
+  preview mesh to the imported `SKM_Quinn_Simple`.
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
   locomotion content or to check compatibility against it).
 - Configure a disposable IK Retargeter with a genuine distinct target and
-  perform/inspect/clean up a guarded batch retarget proof; provide a valid
-  exact-skeleton preview mesh and create/inspect/clean up the guarded Blend
-  Space; compile and inspect a created AnimBP. (Skeleton compatibility inspection
+  perform/inspect/clean up a guarded batch retarget proof; create/inspect/
+  clean up the guarded Blend Space (now unblocked by the preview mesh);
+  compile and inspect a created AnimBP. (Skeleton compatibility inspection
   and duplicate-name detection — via the pre-existing `FindDuplicateNames` —
   are now covered.)
 - Run the disposable-test-area acceptance test end-to-end and report exact
