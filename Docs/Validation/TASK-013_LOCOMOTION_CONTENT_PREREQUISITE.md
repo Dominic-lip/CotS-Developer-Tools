@@ -654,19 +654,50 @@ tests `Result={Success}`, `TEST COMPLETE. EXIT CODE: 0`, and a full-log grep
 for `"will never be taken"` returned zero matches — the compiler warning
 that originally exposed the bug is gone.
 
+## Twenty-second increment: re-verified the fix against the actual saved asset, live
+
+Important nuance the regression test alone did not cover: the fix changes
+the *tool's* future behavior, but `ABP_LocomotionProof.uasset` had already
+been saved to disk with the old, broken pin defaults *before* the fix
+existed. Re-loading that saved asset (e.g. by spawning an actor referencing
+it) recompiles it from its saved graph data and reproduced the exact same
+`"will never be taken"` warnings — proving old content stays broken until
+explicitly re-touched, not just re-built.
+
+Re-applied `SetDisposableAnimBlueprintTransitionRule` (now fixed) to the
+same four existing transitions on the same asset: each call reported
+`before_can_enter_transition: false` (the true state of the never-actually-set
+pin) -> `after: true`. `CompileBlueprint` then returned `compile_status: 3`
+(`BS_UpToDate`, no warnings) where the *identical* prior compile of this
+exact asset had returned `compile_status: 5` (`BS_UpToDateWithWarnings`) —
+same graph topology, only the pin values differed, isolating the fix's
+effect precisely. Saved, then started a fresh PIE session: `GetLogEntries`
+for `"will never be taken"` found matches only at the earlier (pre-fix)
+timestamp, none at or after the second PIE session's start
+(`"PlayLevel: No blueprints needed recompiling"` — the already-clean,
+already-saved asset needed no further work). Stopped PIE, deleted the
+diagnostic map, released the lock.
+
+This closes the loop: the tool is fixed, the regression test proves it, and
+the previously-broken real asset has now itself been repaired and verified
+clean end-to-end, not just the tool that produces new ones.
+
 ## Remaining work (not done here)
 
-- Re-run the manual PIE proof from the twentieth increment against the
-  fixed tool to directly observe the state machine actually cycling through
-  all four states at runtime (the regression test above proves the pin is
-  set correctly; it does not itself drive a PIE session).
+- Directly observe the state machine's active state changing at runtime
+  (e.g. via a viewport capture sequence or a dedicated "get active state
+  name" inspection tool, neither of which exists yet) — the evidence above
+  proves the transitions are compiled as enterable and no longer produce
+  the "will never be taken" warning, which is the direct, provable cause of
+  the original non-functional behavior, but it does not itself visually
+  confirm the runtime cycling frame-by-frame.
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
   locomotion content or to check compatibility against it).
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof.
 - Run the disposable-test-area acceptance test end-to-end and report exact
-  assets/results, once the transition-rule defect above is fixed.
+  assets/results.
 
 Status remains `PARTIAL`, not `COMPLETE_VERIFIED` — this record covers the
 content prerequisite plus most of the eight target capabilities; only the
