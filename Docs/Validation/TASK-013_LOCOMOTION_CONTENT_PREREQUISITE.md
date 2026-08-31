@@ -688,20 +688,56 @@ This closes the loop: the tool is fixed, the regression test proves it, and
 the previously-broken real asset has now itself been repaired and verified
 clean end-to-end, not just the tool that produces new ones.
 
+## Twenty-third increment: visual viewport confirmation
+
+Added a `DirectionalLight` to the disposable map (the earlier attempt's
+screenshot was a black frame — an unlit scratch level, not proof of anything)
+and re-ran the same actor/PIE setup. `CaptureViewport` at PIE start
+(~1s warmup) and again moments later both show the character in a clearly
+non-idle, airborne/crouched pose (bent knees, forward arm swing) — visually
+consistent with the `JumpStart`/`Falling` family of states, not the
+standing `MM_Idle` pose or a static bind/T-pose. This is real, if partial,
+runtime corroboration: it directly shows a non-Idle state was reached and
+rendered, which is exactly the class of transition (`Idle -> JumpStart`)
+the original bug prevented.
+
+Being precise about the limits of this evidence: the two captures look very
+similar to each other, which is ambiguous between "settled into one state"
+and "cycling fast enough, with 0.2s crossfade blending, that consecutive
+snapshots look alike." All four transition rules are unconditionally
+`true`, so the state machine has no gameplay-driven gating (deliberately —
+see the fifteenth increment) and will re-attempt a transition every tick;
+distinguishing "stuck" from "rapidly cycling" would need either a dedicated
+"get active state name" inspection tool (does not exist yet) or a
+frame-accurate capture sequence, neither attempted here. The deterministic
+evidence in the twenty-second increment (identical topology, warning present
+before / absent after, isolated to the pin fix) remains the primary proof
+the defect is fixed; this screenshot is corroborating, not additional proof
+on its own.
+
+Cleaned up: stopped PIE, switched off and deleted `M_LocomotionProof`,
+released the lock.
+
 ## Remaining work (not done here)
 
-- Directly observe the state machine's active state changing at runtime
-  (e.g. via a viewport capture sequence or a dedicated "get active state
-  name" inspection tool, neither of which exists yet) — the evidence above
-  proves the transitions are compiled as enterable and no longer produce
-  the "will never be taken" warning, which is the direct, provable cause of
-  the original non-functional behavior, but it does not itself visually
-  confirm the runtime cycling frame-by-frame.
+- Add a dedicated "get active state name" (or similar) inspection tool to
+  distinguish "stuck" from "rapidly cycling" states unambiguously, then use
+  it (or a frame-accurate capture sequence) to directly confirm cycling.
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
-  locomotion content or to check compatibility against it).
+  locomotion content or to check compatibility against it). Note: enabling
+  it pulls in the "MetaHumanCharacter" plugin's Editor+Runtime C++ modules
+  (a beta plugin with its own dependency chain), which needs a full editor
+  rebuild — a larger, riskier change than anything done in this task so far,
+  best done as its own deliberate step rather than folded into a content
+  turn.
 - Configure a disposable IK Retargeter with a genuine distinct target and
-  perform/inspect/clean up a guarded batch retarget proof.
+  perform/inspect/clean up a guarded batch retarget proof. A real, non-Bridge-download
+  candidate now exists: the MetaHumanCharacter plugin ships
+  `Animation/Retargeting/RTG_MH_IKRig.uasset` (a real `UIKRetargeter`) and
+  `Face/Face_Archetype_Skeleton.uasset`/`archetype_SkelMesh_Skeleton.uasset`
+  (genuine MetaHuman body/face skeletons, distinct from `SK_Mannequin`) —
+  gated on the plugin-enable/rebuild step above.
 - Run the disposable-test-area acceptance test end-to-end and report exact
   assets/results.
 
