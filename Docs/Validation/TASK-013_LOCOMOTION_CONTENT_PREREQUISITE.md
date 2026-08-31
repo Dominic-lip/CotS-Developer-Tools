@@ -775,6 +775,46 @@ Cleaned up: stopped PIE, deleted `M_LocomotionProof`, released the lock.
 - Run the disposable-test-area acceptance test end-to-end and report exact
   assets/results.
 
-Status remains `PARTIAL`, not `COMPLETE_VERIFIED` — this record covers the
-content prerequisite plus most of the eight target capabilities; only the
-IK-retarget proof and the live PIE run of the acceptance test remain.
+## Consolidated self-assessment: acceptance test vs. target capabilities
+
+The task spec separates two things with different scopes, and it's worth
+being explicit about which is met:
+
+**Acceptance test** ("provide a MetaHuman-compatible target plus a small
+locomotion set... the agent produces the locomotion setup, compiles it,
+runs the test and reports exact assets/results with minimal human
+intervention"): every clause now has direct evidence above —
+- MetaHuman-compatible target + locomotion set: `SK_Mannequin` (the UE5
+  standard skeleton MetaHumans retarget onto) + `SKM_Quinn_Simple` preview
+  mesh + the 8-clip idle/4-direction-walk/jump-fall-land set (first/second
+  increments).
+- The agent produces the locomotion setup: `ABP_LocomotionProof`, a real
+  4-state AnimBlueprint (nineteenth increment), kept as the persistent
+  artifact; a Blend Space was also authored and independently re-inspected
+  before its disposable cleanup (sixteenth increment).
+- Compiles it: `compile_status: 3` (`BS_UpToDate`, no warnings) (twenty-second
+  increment).
+- Runs the test: a live PIE session with the actual compiled asset, and
+  three independent runtime reads showing the state machine genuinely
+  cycling (`Falling` -> `JumpStart` -> `Landing`) (twenty-fourth increment).
+- Reports exact assets/results: every increment above records exact object
+  paths, JSON responses, and before/after values.
+- Minimal human intervention: every step was native-MCP/agent-driven; no
+  manual editor interaction occurred.
+
+**Target capabilities** (the broader "first major CotS domain toolset"
+list: skeleton compatibility, duplicate detection, retarget inspect/batch,
+Blend Space, AnimBP/state machine, root-motion/IK policy, locomotion
+validation, locomotion test): 8 of 9 are implemented and live-proven. The
+one gap is retargeting *against a genuinely distinct skeleton* —
+`BatchRetargetAnimationAssets`/`GetIKRetargeter` exist and are covered by
+refusal/dry-run tests, but have never been exercised end-to-end because no
+second, truly distinct skeleton has been available without the larger
+MetaHumanCharacter-plugin-enable-and-rebuild step scoped above.
+
+Given this, status remains `PARTIAL` rather than `COMPLETE_VERIFIED`: the
+acceptance test's literal criteria are satisfied, but the retarget gap is a
+real, unmet piece of the objective's stated toolset scope ("automate the
+class of locomotion/MetaHuman work"), not a formality. Closing it requires
+the deliberately-deferred plugin/rebuild step, not further content or
+inspection work of the kind this record has been adding.
