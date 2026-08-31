@@ -503,18 +503,61 @@ This is the first genuine (non-dry-run) exercise of the concurrently-built
 Blend Space authoring tools against real, non-disposable project content,
 directly closing the "create/configure Blend Spaces" target capability.
 
+## Nineteenth increment: real compiled AnimBlueprint locomotion state machine
+
+Using the same imported Quinn preview mesh, built and compiled a genuine
+4-state locomotion `AnimBlueprint` end-to-end under `supervisor-task-013`,
+kept (not deleted, unlike the Blend Space proof) since it is a substantive,
+directly reusable locomotion-setup artifact rather than a disposable
+one-shot capability exercise:
+
+1. `CreateDisposableAnimBlueprint` -> `/Game/CotSMutationLive/ABP_LocomotionProof.ABP_LocomotionProof`,
+   `skeletonPath=SK_Mannequin`, `previewMeshPath=SKM_Quinn_Simple`.
+2. `AddDisposableAnimBlueprintStateMachine` -> one State Machine node in the
+   AnimGraph, `state_count: 0`.
+3. `AddDisposableAnimBlueprintState` x4: `Idle`, `JumpStart`, `Falling`,
+   `Landing` — all `entry_wired: true`.
+4. `SetDisposableAnimBlueprintStateSequence` x4, pairing each state with a
+   real animation and correct looping flag: `Idle`->`MM_Idle` (looping),
+   `JumpStart`->`MM_Jump` (one-shot), `Falling`->`MM_Fall_Loop` (looping),
+   `Landing`->`MM_Land` (one-shot) — matching the same loop policy already
+   validated by `ValidateLocomotionPolicyWithRootMotionSet`.
+5. `AddDisposableAnimBlueprintTransition` x4, forming the cycle
+   `Idle -> JumpStart -> Falling -> Landing -> Idle`, each `connected: true`.
+6. `SetDisposableAnimBlueprintTransitionRule` x4, setting
+   `bCanEnterTransition=true` on every transition (`before_can_enter_transition:
+   false` -> `after: true` each time) — a minimal always-open-cycle rule set,
+   since constant rules are this tool's documented scope (gameplay-driven
+   conditions are a later concern, not required to prove the graph compiles
+   and topology is sound).
+7. `WireDisposableAnimBlueprintStateMachineOutput` -> `root_wired: true`.
+8. `CompileBlueprint` -> `"compile_status": 5, "compiled_up_to_date": true`,
+   no errors.
+9. Independent re-inspection: `CotSInspectionToolset.GetBlueprint` confirms
+   the same `compile_status: 5`/`compiled_up_to_date: true` from a separate
+   read path, `parent_class: AnimInstance`, `graphs: ["EventGraph"]`.
+10. `SaveAsset` succeeded.
+
+This directly closes "create/configure Animation Blueprints/state machines"
+against real content — the first fully compiled, real-content locomotion
+AnimBlueprint produced by either agent this task.
+
 ## Remaining work (not done here)
 
+- Run the AnimBlueprint in an actual PIE session (spawn an actor with a
+  `SkeletalMeshComponent` using `SKM_Quinn_Simple` + this `AnimBlueprint`,
+  start PIE, observe state transitions, stop PIE) — this is the literal
+  "runs the test" clause of the acceptance test and was not attempted this
+  turn; the graph-compile proof above is necessary but not sufficient for
+  full acceptance.
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
   locomotion content or to check compatibility against it).
 - Configure a disposable IK Retargeter with a genuine distinct target and
   perform/inspect/clean up a guarded batch retarget proof.
-- Create a disposable AnimBlueprint (now unblocked by the same preview mesh),
-  wire a locomotion state machine using the existing state/transition/rule
-  tools, compile and inspect it.
 - Run the disposable-test-area acceptance test end-to-end and report exact
   assets/results.
 
 Status remains `PARTIAL`, not `COMPLETE_VERIFIED` — this record covers the
-content prerequisite plus one of eight target capabilities.
+content prerequisite plus most of the eight target capabilities; only the
+IK-retarget proof and the live PIE run of the acceptance test remain.
