@@ -718,11 +718,45 @@ on its own.
 Cleaned up: stopped PIE, switched off and deleted `M_LocomotionProof`,
 released the lock.
 
+## Twenty-fourth increment: definitive live proof the state machine cycles
+
+Added `UCotSInspectionToolset::GetPIEAnimInstanceStateName(ActorSelector,
+StateMachineName)` — the exact "get active state name" tool the prior
+increment identified as missing. It resolves one PIE actor (reusing
+`GetPIEActorFloatProperty`'s exact-path/label/class selector pattern), finds
+its `USkeletalMeshComponent`'s live `UAnimInstance`, and calls UE's own
+public `GetStateMachineIndex`/`GetCurrentStateName` — no custom state-tracking
+logic, just the same accessors Persona's own debug views use. (Caught and
+fixed a validation bug during development: state machine names are
+free-form display strings with spaces, e.g. UE's own default "New State
+Machine", so the existing identifier-only validator used for property names
+had to be relaxed to non-empty-only for this parameter.)
+
+Ran the same actor/PIE setup as the twenty-third increment and called the
+new tool three times in quick succession:
+
+```
+call 1: current_state_name = "Falling"
+call 2: current_state_name = "JumpStart"
+call 3: current_state_name = "Landing"
+```
+
+This is definitive, not corroborating: three independent, deterministic
+runtime reads through UE's own API show the state genuinely changing between
+calls. The state machine is not stuck — it is actively cycling through the
+fixed transition graph exactly as the compiled, warning-free topology says
+it should. This closes the "stuck vs. rapidly cycling" ambiguity the
+previous increment explicitly left open.
+
+Added a corresponding automation test (outside-PIE refusal path and the
+empty/free-form state-machine-name validation, since automation tests don't
+run inside a live PIE session): `RunCotSAutomation` still passes 13/13,
+`TEST COMPLETE. EXIT CODE: 0`.
+
+Cleaned up: stopped PIE, deleted `M_LocomotionProof`, released the lock.
+
 ## Remaining work (not done here)
 
-- Add a dedicated "get active state name" (or similar) inspection tool to
-  distinguish "stuck" from "rapidly cycling" states unambiguously, then use
-  it (or a frame-accurate capture sequence) to directly confirm cycling.
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
   locomotion content or to check compatibility against it). Note: enabling

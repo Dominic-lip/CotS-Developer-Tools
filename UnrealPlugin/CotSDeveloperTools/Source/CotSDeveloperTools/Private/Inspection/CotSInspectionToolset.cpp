@@ -18,8 +18,10 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimationAsset.h"
 #include "Animation/BlendSpace.h"
+#include "Animation/AnimInstance.h"
 #include "Animation/Skeleton.h"
 #include "Components/ActorComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Curves/CurveFloat.h"
 #include "GameFramework/Actor.h"
 #include "Interfaces/IPluginManager.h"
@@ -271,6 +273,60 @@ FString UCotSInspectionToolset::GetPIEActorFloatProperty(const FString& ActorSel
     Result.Data->SetStringField(TEXT("actor_selector"), ActorSelector);
     Result.Data->SetStringField(TEXT("property_name"), PropertyName);
     Result.Data->SetNumberField(TEXT("value"), Value);
+    return Result.ToJson();
+}
+
+FString UCotSInspectionToolset::GetPIEAnimInstanceStateName(const FString& ActorSelector, const FString& StateMachineName)
+{
+    constexpr const TCHAR* Operation = TEXT("CotS.Inspection.GetPIEAnimInstanceStateName");
+    if (StateMachineName.IsEmpty())
+    {
+        // Unlike a C++ property name, a State Machine's display name is a
+        // free-form FName (UE's own default is "New State Machine", with
+        // spaces), so only emptiness is rejected here.
+        return FCotSOperationResult::Fail(Operation, TEXT("invalid_state_machine_name"), TEXT("StateMachineName must not be empty.")).ToJson();
+    }
+    if (!GEditor || !GEditor->PlayWorld)
+    {
+        return FCotSOperationResult::Fail(Operation, TEXT("pie_not_running"), TEXT("No active Play-In-Editor world is available.")).ToJson();
+    }
+
+    AActor* Match = nullptr;
+    for (TActorIterator<AActor> It(GEditor->PlayWorld); It; ++It)
+    {
+        if (It->GetPathName() != ActorSelector && It->GetActorLabel() != ActorSelector && It->GetClass()->GetPathName() != ActorSelector && It->GetClass()->GetName() != ActorSelector) { continue; }
+        if (Match)
+        {
+            return FCotSOperationResult::Fail(Operation, TEXT("ambiguous_actor_selector"), TEXT("More than one PIE actor matches the requested path, label, class path, or class name.")).ToJson();
+        }
+        Match = *It;
+    }
+    if (!Match)
+    {
+        return FCotSOperationResult::Fail(Operation, TEXT("actor_not_found"), TEXT("No PIE actor matches the requested path, label, class path, or class name.")).ToJson();
+    }
+
+    const USkeletalMeshComponent* SkeletalMeshComponent = Match->FindComponentByClass<USkeletalMeshComponent>();
+    UAnimInstance* AnimInstance = SkeletalMeshComponent ? SkeletalMeshComponent->GetAnimInstance() : nullptr;
+    if (!AnimInstance)
+    {
+        return FCotSOperationResult::Fail(Operation, TEXT("anim_instance_not_found"), TEXT("The matched actor has no SkeletalMeshComponent with a running AnimInstance.")).ToJson();
+    }
+
+    const int32 MachineIndex = AnimInstance->GetStateMachineIndex(FName(*StateMachineName));
+    if (MachineIndex == INDEX_NONE)
+    {
+        return FCotSOperationResult::Fail(Operation, TEXT("state_machine_not_found"), TEXT("The AnimInstance has no State Machine with the exact requested name.")).ToJson();
+    }
+    const FName CurrentStateName = AnimInstance->GetCurrentStateName(MachineIndex);
+
+    FCotSOperationResult Result = FCotSOperationResult::Succeed(Operation);
+    Result.AddAffectedObject(Match->GetPathName());
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("actor_path"), Match->GetPathName());
+    Result.Data->SetStringField(TEXT("actor_selector"), ActorSelector);
+    Result.Data->SetStringField(TEXT("state_machine_name"), StateMachineName);
+    Result.Data->SetStringField(TEXT("current_state_name"), CurrentStateName.ToString());
     return Result.ToJson();
 }
 

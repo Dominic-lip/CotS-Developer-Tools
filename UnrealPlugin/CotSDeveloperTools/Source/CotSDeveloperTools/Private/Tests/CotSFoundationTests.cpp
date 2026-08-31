@@ -154,8 +154,22 @@ bool FCotSInspectionExactPathTest::RunTest(const FString& Parameters)
     TSharedPtr<FJsonObject> PieJson;
     TestTrue(TEXT("PIE inspection preflight returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetPIEActorFloatProperty(TEXT("NoActor"), TEXT("RuntimeValue"))), PieJson));
     TestFalse(TEXT("PIE inspection refuses outside PIE"), PieJson.IsValid() && PieJson->GetBoolField(TEXT("success")));
+
+    // Live PIE cycling for TASK-013's locomotion AnimBlueprint is proven
+    // manually (see Docs/Validation/TASK-013_LOCOMOTION_CONTENT_PREREQUISITE.md,
+    // twenty-fourth increment: three repeated calls returned Falling ->
+    // JumpStart -> Landing). This only covers the outside-PIE refusal path
+    // and the free-form (space-containing) state machine name validation,
+    // since automation tests do not run inside a live PIE session.
+    TSharedPtr<FJsonObject> StateNamePieJson;
+    TestTrue(TEXT("PIE state-name inspection preflight returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetPIEAnimInstanceStateName(TEXT("NoActor"), TEXT("New State Machine"))), StateNamePieJson));
+    TestFalse(TEXT("PIE state-name inspection refuses outside PIE"), StateNamePieJson.IsValid() && StateNamePieJson->GetBoolField(TEXT("success")));
+    TSharedPtr<FJsonObject> EmptyStateMachineNameJson;
+    TestTrue(TEXT("Empty state machine name returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSInspectionToolset::GetPIEAnimInstanceStateName(TEXT("NoActor"), FString())), EmptyStateMachineNameJson));
+    TestFalse(TEXT("Empty state machine name is rejected"), EmptyStateMachineNameJson.IsValid() && EmptyStateMachineNameJson->GetBoolField(TEXT("success")));
+
     const FString InspectionSchema = UToolsetRegistry::GetToolsetJsonSchema(UCotSInspectionToolset::StaticClass());
-    TestTrue(TEXT("Inspection schema exposes typed PIE inventory and float readers"), InspectionSchema.Contains(TEXT("ListPIEActors")) && InspectionSchema.Contains(TEXT("GetPIEActorFloatProperty")));
+    TestTrue(TEXT("Inspection schema exposes typed PIE inventory and float readers"), InspectionSchema.Contains(TEXT("ListPIEActors")) && InspectionSchema.Contains(TEXT("GetPIEActorFloatProperty")) && InspectionSchema.Contains(TEXT("GetPIEAnimInstanceStateName")));
 
     FAssetRegistryModule::AssetDeleted(AssetA);
     FAssetRegistryModule::AssetDeleted(AssetB);

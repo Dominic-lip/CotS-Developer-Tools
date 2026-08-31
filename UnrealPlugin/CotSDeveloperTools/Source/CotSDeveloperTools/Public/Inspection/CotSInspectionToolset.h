@@ -23,6 +23,8 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString ListPIEActors();
     /** Reads one named float property from exactly one PIE actor selected by exact path, label, generated-class path, or class name. */
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetPIEActorFloatProperty(const FString& ActorSelector, const FString& PropertyName);
+    /** Reads the currently active state name of one named AnimGraph State Machine on exactly one PIE actor's AnimInstance, selected by exact path, label, generated-class path, or class name. Distinguishes a stuck state machine from one that is actually cycling. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetPIEAnimInstanceStateName(const FString& ActorSelector, const FString& StateMachineName);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetReferences(const FString& ObjectPath, bool bReferencers);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetBlueprint(const FString& ObjectPath);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetAnimationAsset(const FString& ObjectPath);
