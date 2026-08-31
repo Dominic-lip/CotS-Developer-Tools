@@ -611,15 +611,55 @@ async-save artifact, not a registry inconsistency worth deeper investigation
 here), so it was removed directly via filesystem delete and confirmed absent
 from `git status` before committing.
 
+## Twenty-first increment: fixed the transition-rule defect and added a regression test
+
+Fixed `UCotSMutationToolset::SetDisposableAnimBlueprintTransitionRule`
+(`UnrealPlugin/.../Private/Mutation/CotSMutationToolset.cpp`): it now finds
+the Transition Result node's real `bCanEnterTransition` input pin
+(`ResultNode->FindPin(TEXT("bCanEnterTransition"))`, guaranteed present since
+the underlying `FAnimNode_TransitionResult::bCanEnterTransition` property is
+declared `meta=(PinShownByDefault)`), refuses to touch it if something is
+already wired to it (`transition_rule_already_wired`, preserving this tool's
+constant-rule-only scope rather than silently clobbering a real expression
+graph), and sets `Pin->DefaultValue` to `"true"`/`"false"` — the actual value
+the transition-graph compiler reads for an unconnected pin — in addition to
+the runtime struct field for read consistency. `before_can_enter_transition`
+now also reads from the pin's `DefaultValue`, not the (previously
+authoritative but functionally irrelevant) struct field.
+
+Added a full, non-dry-run regression test to `CotS.Inspection.SkeletonCompatibility`
+in `CotSFoundationTests.cpp`: builds a real disposable AnimBlueprint (2
+states, 1 transition, constant rule), asserts the JSON-reported before/after
+values, then independently walks the compiled graph in the test itself
+(`FindPin`) and asserts the **pin's** `DefaultValue` equals `"true"` — not
+just the tool's own self-reported JSON, which is exactly what let the
+original bug ship unnoticed. Also asserts repeating the same rule is a
+deterministic `no_change`, proving the fix's before-value read is stable.
+
+This run also surfaced and fixed a second, unrelated pre-existing issue:
+two dry-run tests (`CreateDisposableLocomotionBlendSpace`/`CreateDisposableAnimBlueprint`
+with an empty `previewMeshPath`) started failing because `USkeleton::GetPreviewMesh(bFindIfNotSet=true)`
+caches whatever compatible mesh it finds (`Skeleton.cpp`: calls
+`SetPreviewMesh` internally) — once the Quinn mesh was imported earlier in
+this task, that auto-resolve path started succeeding where the tests still
+expected failure. Updated both assertions to expect success, since this is
+the "let UE resolve the Skeleton's preview mesh" fallback working as
+documented, not a regression.
+
+**Validation**: canonical `Build-ToolLab.cmd` succeeded twice (once revealing
+the two now-stale dry-run assertions, once clean after fixing them — both
+`Result: Succeeded`, exit 0). `RunCotSAutomation` first failed
+(`exit_code: 255`, the two stale assertions) then passed cleanly: 12/12
+tests `Result={Success}`, `TEST COMPLETE. EXIT CODE: 0`, and a full-log grep
+for `"will never be taken"` returned zero matches — the compiler warning
+that originally exposed the bug is gone.
+
 ## Remaining work (not done here)
 
-- **Fix `SetDisposableAnimBlueprintTransitionRule`** to set the transition
-  result pin's actual default value (e.g. via the pin's
-  `GetSchema()->TrySetDefaultValue`/`PC_Boolean` default-value string, or by
-  wiring a boolean literal `K2Node`) rather than the raw runtime struct
-  field, so `bCanEnterTransition=true` is honored by the compiler. Re-run
-  the same PIE proof afterward to confirm the state machine actually cycles
-  through all four states.
+- Re-run the manual PIE proof from the twentieth increment against the
+  fixed tool to directly observe the state machine actually cycling through
+  all four states at runtime (the regression test above proves the pin is
+  set correctly; it does not itself drive a PIE session).
 - Enable the MetaHuman plugin if/when actual retargeting-to-MetaHuman
   automation is implemented (not required merely to hold this UE5-skeleton
   locomotion content or to check compatibility against it).

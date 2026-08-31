@@ -606,15 +606,28 @@ FString UCotSMutationToolset::SetDisposableAnimBlueprintTransitionRule(const FSt
     UAnimationTransitionGraph* RuleGraph = Cast<UAnimationTransitionGraph>(RequestedTransition->BoundGraph);
     UAnimGraphNode_TransitionResult* ResultNode = RuleGraph ? RuleGraph->GetResultNode() : nullptr;
     if (!ResultNode) { return FCotSOperationResult::Fail(Op, TEXT("transition_result_not_found"), TEXT("The requested transition has no initialized public Transition Result node."), bDryRun).ToJson(); }
+    // bCanEnterTransition is a PinShownByDefault struct property: the anim
+    // transition-graph compiler generates its bytecode from the pin (its
+    // connection, or its DefaultValue string) and never reads the runtime
+    // FAnimNode_TransitionResult struct directly, so writing only the struct
+    // field compiles without error but the transition can never be taken --
+    // the pin's own default value must be set for the rule to actually work.
+    UEdGraphPin* CanEnterTransitionPin = ResultNode->FindPin(TEXT("bCanEnterTransition"));
+    if (!CanEnterTransitionPin) { return FCotSOperationResult::Fail(Op, TEXT("transition_result_pin_not_found"), TEXT("The Transition Result node has no bCanEnterTransition input pin.")).ToJson(); }
+    if (CanEnterTransitionPin->LinkedTo.Num() > 0)
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("transition_rule_already_wired"), TEXT("The bCanEnterTransition pin already has a connected expression graph; this tool only authors an unconnected constant rule.")).ToJson();
+    }
     FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath);
     Result.Data = MakeShared<FJsonObject>();
     Result.Data->SetStringField(TEXT("source_state"), SourceStateName);
     Result.Data->SetStringField(TEXT("target_state"), TargetStateName);
     Result.Data->SetStringField(TEXT("transition_graph"), RuleGraph->GetPathName());
     Result.Data->SetStringField(TEXT("result_node"), ResultNode->GetPathName());
-    Result.Data->SetBoolField(TEXT("before_can_enter_transition"), ResultNode->Node.bCanEnterTransition);
+    const bool bBeforeCanEnterTransition = CanEnterTransitionPin->DefaultValue.ToBool();
+    Result.Data->SetBoolField(TEXT("before_can_enter_transition"), bBeforeCanEnterTransition);
     Result.Data->SetBoolField(TEXT("after_can_enter_transition"), bCanEnterTransition);
-    if (ResultNode->Node.bCanEnterTransition == bCanEnterTransition)
+    if (bBeforeCanEnterTransition == bCanEnterTransition)
     {
         Result.Validation.Add(TEXT("already_contains_requested_constant_rule"));
         return Finish(Result, false, false, TEXT("Transition-rule authoring is graph-backed and not transaction-backed."));
@@ -627,6 +640,7 @@ FString UCotSMutationToolset::SetDisposableAnimBlueprintTransitionRule(const FSt
     Blueprint->Modify();
     RuleGraph->Modify();
     ResultNode->Modify();
+    CanEnterTransitionPin->DefaultValue = bCanEnterTransition ? TEXT("true") : TEXT("false");
     ResultNode->Node.bCanEnterTransition = bCanEnterTransition;
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
     Result.Validation.Add(TEXT("compile with CotS.Mutation.CompileBlueprint before saving"));

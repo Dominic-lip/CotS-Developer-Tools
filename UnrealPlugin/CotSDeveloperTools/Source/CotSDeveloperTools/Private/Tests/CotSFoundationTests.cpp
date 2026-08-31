@@ -1,5 +1,10 @@
 #include "Core/CotSOperationResult.h"
 #include "Animation/AnimBlueprint.h"
+#include "AnimationGraph.h"
+#include "AnimGraphNode_StateMachine.h"
+#include "AnimGraphNode_TransitionResult.h"
+#include "AnimStateTransitionNode.h"
+#include "AnimationTransitionGraph.h"
 #include "Execution/CotSExecutionToolset.h"
 #include "Foundation/CotSFoundationToolset.h"
 #include "Inspection/CotSInspectionToolset.h"
@@ -226,13 +231,19 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TestTrue(TEXT("Empty retarget batch returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::BatchRetargetAnimationAssets({}, TEXT("/Game/Missing.Missing"), TEXT("/Game/CotSMutationLive/Retargeted"), true)), BatchGuardJson));
     TestFalse(TEXT("Empty retarget batch is rejected before mutation"), BatchGuardJson.IsValid() && BatchGuardJson->GetBoolField(TEXT("success")));
 
+    // Since TASK-013 imported a real compatible preview mesh (SKM_Quinn_Simple)
+    // for this Skeleton, USkeleton::GetPreviewMesh(bFindIfNotSet=true) now
+    // finds and caches it (Skeleton.cpp: GetPreviewMesh -> FindCompatibleMesh
+    // -> SetPreviewMesh), so an empty PreviewMeshPath no longer fails to
+    // resolve -- it now proves the "let UE resolve the Skeleton's preview
+    // mesh" fallback documented on these tools actually works.
     TSharedPtr<FJsonObject> BlendSpaceDryRunJson;
     TestTrue(TEXT("Disposable locomotion Blend Space dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::CreateDisposableLocomotionBlendSpace(TEXT("/Game/CotSMutationLive/BS_AutomationPreview.BS_AutomationPreview"), SkeletonPath, FString(), true)), BlendSpaceDryRunJson));
-    TestFalse(TEXT("Disposable locomotion Blend Space dry-run rejects the imported Skeleton's unresolved preview mesh"), BlendSpaceDryRunJson.IsValid() && BlendSpaceDryRunJson->GetBoolField(TEXT("success")));
+    TestTrue(TEXT("Disposable locomotion Blend Space dry-run resolves the Skeleton's auto-discovered preview mesh"), BlendSpaceDryRunJson.IsValid() && BlendSpaceDryRunJson->GetBoolField(TEXT("success")));
 
     TSharedPtr<FJsonObject> AnimBlueprintDryRunJson;
     TestTrue(TEXT("Disposable AnimBlueprint dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::CreateDisposableAnimBlueprint(TEXT("/Game/CotSMutationLive/ABP_AutomationPreview.ABP_AutomationPreview"), SkeletonPath, FString(), true)), AnimBlueprintDryRunJson));
-    TestFalse(TEXT("Disposable AnimBlueprint dry-run rejects the imported Skeleton's unresolved preview mesh"), AnimBlueprintDryRunJson.IsValid() && AnimBlueprintDryRunJson->GetBoolField(TEXT("success")));
+    TestTrue(TEXT("Disposable AnimBlueprint dry-run resolves the Skeleton's auto-discovered preview mesh"), AnimBlueprintDryRunJson.IsValid() && AnimBlueprintDryRunJson->GetBoolField(TEXT("success")));
 
     TSharedPtr<FJsonObject> StateMachineGuardJson;
     TestTrue(TEXT("Disposable State Machine dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::AddDisposableAnimBlueprintStateMachine(TEXT("/Game/CotSMutationLive/ABP_Missing.ABP_Missing"), true)), StateMachineGuardJson));
@@ -267,6 +278,54 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TSharedPtr<FJsonObject> CompleteLocomotionPolicyJson;
     TestTrue(TEXT("Complete mixed locomotion policy validation returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSValidationToolset::ValidateLocomotionPolicyWithRootMotionSet(SkeletonPath, LoopingLocomotionClips, OneShotLocomotionClips, LoopingLocomotionClips, { TEXT("root"), TEXT("pelvis"), TEXT("ik_foot_l"), TEXT("ik_foot_r") })), CompleteLocomotionPolicyJson));
     TestTrue(TEXT("Complete locomotion set passes per-clip looping/root-motion and required-IK-bones policy"), CompleteLocomotionPolicyJson.IsValid() && CompleteLocomotionPolicyJson->GetBoolField(TEXT("success")));
+
+    // Regression test for a real bug found via a live PIE run (see
+    // Docs/Validation/TASK-013_LOCOMOTION_CONTENT_PREREQUISITE.md, twentieth
+    // increment): SetDisposableAnimBlueprintTransitionRule used to write only
+    // FAnimNode_TransitionResult::bCanEnterTransition, a runtime struct field
+    // the transition-graph compiler ignores for its PinShownByDefault input;
+    // the transition then compiled without error but could never be taken.
+    // This exercises the full real (non-dry-run) pipeline the manual PIE
+    // proof used and asserts the underlying graph pin itself, not just the
+    // tool's own self-reported JSON, actually changes.
+    const FString QuinnPreviewMeshPath = TEXT("/Game/Characters/Mannequins/Meshes/SKM_Quinn_Simple.SKM_Quinn_Simple");
+    const FString TransitionRuleFixturePath = TEXT("/Game/CotSMutationLive/ABP_TransitionRuleFix.ABP_TransitionRuleFix");
+    UCotSMutationToolset::DeleteDisposableAsset(TransitionRuleFixturePath, false);
+    auto ParseMutation = [this](const FString& Text, TSharedPtr<FJsonObject>& Json, const TCHAR* Label) { return TestTrue(Label, FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Json)); };
+    TSharedPtr<FJsonObject> FixtureJson;
+    ParseMutation(UCotSMutationToolset::CreateDisposableAnimBlueprint(TransitionRuleFixturePath, SkeletonPath, QuinnPreviewMeshPath, false), FixtureJson, TEXT("Transition-rule fixture AnimBlueprint creation returns JSON"));
+    TestTrue(TEXT("Transition-rule fixture AnimBlueprint creation succeeds"), FixtureJson.IsValid() && FixtureJson->GetBoolField(TEXT("success")));
+    ParseMutation(UCotSMutationToolset::AddDisposableAnimBlueprintStateMachine(TransitionRuleFixturePath, false), FixtureJson, TEXT("Transition-rule fixture State Machine creation returns JSON"));
+    TestTrue(TEXT("Transition-rule fixture State Machine creation succeeds"), FixtureJson.IsValid() && FixtureJson->GetBoolField(TEXT("success")));
+    ParseMutation(UCotSMutationToolset::AddDisposableAnimBlueprintState(TransitionRuleFixturePath, TEXT("A"), false), FixtureJson, TEXT("Transition-rule fixture State A creation returns JSON"));
+    TestTrue(TEXT("Transition-rule fixture State A creation succeeds"), FixtureJson.IsValid() && FixtureJson->GetBoolField(TEXT("success")));
+    ParseMutation(UCotSMutationToolset::AddDisposableAnimBlueprintState(TransitionRuleFixturePath, TEXT("B"), false), FixtureJson, TEXT("Transition-rule fixture State B creation returns JSON"));
+    TestTrue(TEXT("Transition-rule fixture State B creation succeeds"), FixtureJson.IsValid() && FixtureJson->GetBoolField(TEXT("success")));
+    ParseMutation(UCotSMutationToolset::AddDisposableAnimBlueprintTransition(TransitionRuleFixturePath, TEXT("A"), TEXT("B"), 0.2, false), FixtureJson, TEXT("Transition-rule fixture transition creation returns JSON"));
+    TestTrue(TEXT("Transition-rule fixture transition creation succeeds"), FixtureJson.IsValid() && FixtureJson->GetBoolField(TEXT("success")));
+    ParseMutation(UCotSMutationToolset::SetDisposableAnimBlueprintTransitionRule(TransitionRuleFixturePath, TEXT("A"), TEXT("B"), true, false), FixtureJson, TEXT("Transition-rule fixture rule authoring returns JSON"));
+    TestTrue(TEXT("Transition-rule fixture rule authoring succeeds"), FixtureJson.IsValid() && FixtureJson->GetBoolField(TEXT("success")));
+    TestFalse(TEXT("Transition-rule reported false before the fix"), FixtureJson.IsValid() && FixtureJson->GetObjectField(TEXT("data"))->GetBoolField(TEXT("before_can_enter_transition")));
+    TestTrue(TEXT("Transition-rule reports true after authoring"), FixtureJson.IsValid() && FixtureJson->GetObjectField(TEXT("data"))->GetBoolField(TEXT("after_can_enter_transition")));
+
+    UAnimBlueprint* FixtureBlueprint = Cast<UAnimBlueprint>(StaticLoadObject(UAnimBlueprint::StaticClass(), nullptr, *TransitionRuleFixturePath));
+    UAnimationGraph* FixtureAnimGraph = nullptr;
+    for (UEdGraph* Graph : FixtureBlueprint->FunctionGraphs) { if (UAnimationGraph* Candidate = Cast<UAnimationGraph>(Graph)) { FixtureAnimGraph = Candidate; break; } }
+    TArray<UAnimGraphNode_Base*> FixtureMachines;
+    FixtureAnimGraph->GetGraphNodesOfClass(UAnimGraphNode_StateMachine::StaticClass(), FixtureMachines, true);
+    UAnimGraphNode_StateMachine* FixtureMachine = Cast<UAnimGraphNode_StateMachine>(FixtureMachines[0]);
+    TArray<UAnimStateTransitionNode*> FixtureTransitions;
+    FixtureMachine->EditorStateMachineGraph->GetNodesOfClass(FixtureTransitions);
+    UAnimGraphNode_TransitionResult* FixtureResultNode = Cast<UAnimationTransitionGraph>(FixtureTransitions[0]->BoundGraph)->GetResultNode();
+    UEdGraphPin* FixtureCanEnterPin = FixtureResultNode->FindPin(TEXT("bCanEnterTransition"));
+    TestNotNull(TEXT("Transition Result node exposes a bCanEnterTransition pin"), FixtureCanEnterPin);
+    TestEqual(TEXT("The pin itself (not just the runtime struct) carries the authored default value"), FixtureCanEnterPin->DefaultValue, FString(TEXT("true")));
+
+    TSharedPtr<FJsonObject> IdempotentRuleJson;
+    ParseMutation(UCotSMutationToolset::SetDisposableAnimBlueprintTransitionRule(TransitionRuleFixturePath, TEXT("A"), TEXT("B"), true, false), IdempotentRuleJson, TEXT("Repeated transition-rule authoring returns JSON"));
+    TestEqual(TEXT("Repeating the same rule is a deterministic no-op reading the pin, not the stale struct"), IdempotentRuleJson->GetStringField(TEXT("status")), FString(TEXT("no_change")));
+
+    UCotSMutationToolset::DeleteDisposableAsset(TransitionRuleFixturePath, false);
     return true;
 }
 
