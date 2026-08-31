@@ -856,3 +856,44 @@ about needing a source rebuild, not a measurement. Left ToolLab running
 next turn's fresh process can connect natively, inspect
 `RTG_MH_IKRig.uasset`/`archetype_SkelMesh_Skeleton.uasset` for real, and
 attempt the distinct-skeleton batch-retarget proof.
+
+## Twenty-sixth increment: real MetaHuman retarget content inspected — the actual remaining gap is scoped precisely
+
+Native `unreal-mcp` reconnected this turn (ToolLab was left running).
+Confirmed `/MetaHumanCharacter/` is now a real, browsable content root
+(`AssetTools.get_plugin_content_paths`), and inspected the plugin's actual
+retarget assets:
+
+- `find_assets` for class `/Script/IKRig.IKRetargeter` across the whole
+  project returns exactly one asset:
+  `/MetaHumanCharacter/Animation/Retargeting/RTG_MH_IKRig`. For class
+  `/Script/IKRig.IKRigDefinition`, exactly one:
+  `/MetaHumanCharacter/Animation/Retargeting/IK_MH_IKRig`. There is no
+  pre-made Mannequin-to-MetaHuman retargeter bundled anywhere in the
+  currently-accessible content.
+- `GetIKRetargeter` on `RTG_MH_IKRig` shows it is a **MetaHuman-to-MetaHuman
+  self-retargeter**: both source and target use the same `IK_MH_IKRig`/
+  `SKM_Body` pair — not a bridge to `SK_Mannequin`.
+- Important, reusable finding: `IK_MH_IKRig`'s 27 retarget chains use bone
+  names (`upperarm_l-hand_l`, `thigh_l-ball_l`, `spine_01-spine_05`,
+  `clavicle_l-clavicle_l`, `root-root`, `pelvis`, etc.) that are the **same
+  UE5-standard naming convention `SK_Mannequin` uses** — MetaHumans are
+  built to be compatible with this skeleton by design. A from-scratch IK Rig
+  for `SK_Mannequin` could very plausibly reuse this exact chain list rather
+  than needing new chain design.
+- `list_toolsets` (re-checked after the plugin enable) confirms there is
+  still no native IK Rig *authoring* MCP toolset (no `IKRigTools` of any
+  kind) — only what the existing `CotSInspectionToolset.GetIKRetargeter`/
+  `CotSMutationToolset.BatchRetargetAnimationAssets` already wrap. Building
+  a genuinely new cross-skeleton retarget setup would require **new CotS
+  C++ code** wrapping `UIKRigController`/`UIKRigDefinition` editor APIs
+  (chain/goal/root authoring) — a toolset of comparable scope to the
+  AnimBP/Blend Space work already done this task, not a quick follow-on.
+
+This precisely closes out the remaining ambiguity: the gap is not "find the
+right asset" (found, inspected, real) — it is "no native or CotS tool exists
+yet to author a new IK Rig," which is out of scope for a continuation of
+today's content/inspection/proof work and belongs in its own dedicated
+IK-Rig-authoring engineering task.
+
+Made no mutations this turn (read-only inspection only); released the lock.
