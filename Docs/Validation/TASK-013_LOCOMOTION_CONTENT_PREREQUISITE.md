@@ -654,6 +654,12 @@ tests `Result={Success}`, `TEST COMPLETE. EXIT CODE: 0`, and a full-log grep
 for `"will never be taken"` returned zero matches — the compiler warning
 that originally exposed the bug is gone.
 
+*(Note on commit `c0c18c2`: its message was mistakenly copy-pasted from the
+twentieth increment's commit and inaccurately says transitions "currently
+never fire" — the opposite of what that commit actually did. The correct
+summary is what the twenty-second increment below describes: the fix was
+verified end-to-end and the transitions now compile clean.)*
+
 ## Twenty-second increment: re-verified the fix against the actual saved asset, live
 
 Important nuance the regression test alone did not cover: the fix changes
