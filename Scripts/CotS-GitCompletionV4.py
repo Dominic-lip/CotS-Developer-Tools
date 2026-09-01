@@ -58,25 +58,14 @@ def repo_path(value: str, root: Path) -> str:
 
 
 def current_branch(root: Path) -> str:
+    """Return the symbolic branch even before the repository has its first commit."""
+    symbolic = git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if symbolic.returncode == 0 and symbolic.stdout.strip():
+        return symbolic.stdout.strip()
     result = git(root, "rev-parse", "--abbrev-ref", "HEAD")
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout).strip())
     return result.stdout.strip()
-
-
-def changed_paths(root: Path) -> list[str]:
-    result = git(root, "status", "--porcelain=v1")
-    if result.returncode:
-        raise RuntimeError((result.stderr or result.stdout).strip())
-    values: list[str] = []
-    for line in result.stdout.splitlines():
-        if not line.strip():
-            continue
-        payload = line[3:].strip()
-        # For rename records, Git porcelain emits "old -> new". The new path
-        # is the path Git ultimately stages/commits.
-        values.append(payload.rsplit(" -> ", 1)[-1])
-    return values
 
 
 def staged_paths(root: Path) -> list[str]:
@@ -184,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     # -A stages modifications, additions *and deletions* for exactly the
-    # requested repository-relative paths.
+    # requested repository-relative paths. Deleted paths need not exist.
     added = git(root, "add", "-A", "--", *requested)
     if added.returncode:
         return emit(added)
