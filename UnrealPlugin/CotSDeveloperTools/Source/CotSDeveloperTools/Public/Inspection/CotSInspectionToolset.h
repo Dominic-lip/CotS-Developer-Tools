@@ -12,9 +12,10 @@ class COTSDEVELOPERTOOLS_API UCotSInspectionToolset : public UToolsetDefinition
     GENERATED_BODY()
 
 public:
-    virtual FString GetToolsetVersion() const override { return TEXT("1.0"); }
+    virtual FString GetToolsetVersion() const override { return TEXT("2.0"); }
 
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetProjectStatus();
+    /** Legacy broad search retained for compatibility; prefer CotSAssetQueryToolset.SearchAssetsFiltered for large production registries. */
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString SearchAssets(const FString& NameQuery, const FString& PathQuery, const FString& ClassPath);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetAsset(const FString& ObjectPath);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetCurveFloat(const FString& ObjectPath);
@@ -23,7 +24,7 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString ListPIEActors();
     /** Reads one named float property from exactly one PIE actor selected by exact path, label, generated-class path, or class name. */
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetPIEActorFloatProperty(const FString& ActorSelector, const FString& PropertyName);
-    /** Reads the currently active state name of one named AnimGraph State Machine on exactly one PIE actor's AnimInstance, selected by exact path, label, generated-class path, or class name. Distinguishes a stuck state machine from one that is actually cycling. */
+    /** Reads the currently active state name of one named AnimGraph State Machine on exactly one PIE actor's AnimInstance. */
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetPIEAnimInstanceStateName(const FString& ActorSelector, const FString& StateMachineName);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetReferences(const FString& ObjectPath, bool bReferencers);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetBlueprint(const FString& ObjectPath);
@@ -32,7 +33,7 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetAnimBlueprintStateMachines(const FString& ObjectPath);
     /** Reports the read-only source/target IK Rig assignments, retarget chains, poses, and operation-stack types for one IK Retargeter asset. */
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetIKRetargeter(const FString& ObjectPath);
-    /** Resolves the skeleton for a Skeleton/SkeletalMesh/AnimationAsset/AnimBlueprint, lists its declared compatible skeletons, and (if CandidateSkeletonPath is non-empty) reports whether that candidate is compatible via UE's native skeleton-compatibility check. */
+    /** Resolves skeleton compatibility through UE's native compatibility check. */
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetSkeletonCompatibility(const FString& ObjectPath, const FString& CandidateSkeletonPath);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString GetPlugins(const FString& NameFilter);
     UFUNCTION(meta = (AICallable), Category = "CotS Inspection") static FString FindDuplicateNames(const FString& ShortName);
