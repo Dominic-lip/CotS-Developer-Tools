@@ -8,6 +8,7 @@ thread or model turn, so it does not intentionally consume coding-model quota.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import shutil
 import subprocess
@@ -44,8 +45,24 @@ def probe_rate_limits(timeout: float = 12.0) -> dict[str, Any]:
         return {"ok": False, "error": "codex CLI not found", "at": time.time()}
     process: subprocess.Popen[str] | None = None
     try:
-        process = subprocess.Popen([exe, "app-server", "--stdio"], cwd=REPO, text=True, encoding="utf-8", errors="replace",
-                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1)
+        kwargs: dict[str, Any] = {}
+        if os.name == "nt":
+            # This probe runs once per minute under pythonw.exe.  Without
+            # CREATE_NO_WINDOW a console-capable Codex executable can briefly
+            # flash a terminal even though the probe itself is background-only.
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        process = subprocess.Popen(
+            [exe, "app-server", "--stdio"],
+            cwd=REPO,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            **kwargs,
+        )
         assert process.stdin is not None and process.stdout is not None
         lines: queue.Queue[str] = queue.Queue(); threading.Thread(target=_reader, args=(process.stdout, lines), daemon=True).start()
         initialize = {"id":1,"method":"initialize","params":{"clientInfo":{"name":"CotS Quota Probe","version":"1.0"},"capabilities":{"experimentalApi":True}}}
