@@ -26,8 +26,26 @@ GPU_VRAM_FREE_PAUSE_MB = 768.0
 
 
 def _run(command: list[str], timeout: float = 5.0) -> str:
+    """Run a local telemetry command without ever surfacing a console window.
+
+    The 24x7 watchdog normally runs under pythonw.exe.  On Windows, spawning a
+    console program such as powershell.exe from a windowless parent creates a
+    visible transient console unless CREATE_NO_WINDOW is supplied.  Hardware
+    polling happens every few seconds, so omitting this flag caused the blue
+    PowerShell windows seen during commissioning.
+    """
     try:
-        result = subprocess.run(command, text=True, capture_output=True, timeout=timeout, check=False)
+        kwargs: dict[str, Any] = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        result = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            **kwargs,
+        )
         return (result.stdout or "").strip()
     except Exception:
         return ""
