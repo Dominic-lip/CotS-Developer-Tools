@@ -20,6 +20,7 @@ TOOLS_REPO = SCRIPT_DIR.parent
 HOST_V4 = SCRIPT_DIR / "CotSHostMcpV4Runner.py"
 SUPERVISOR_V4 = SCRIPT_DIR / "CotSAgentSupervisorV4.py"
 BOOTSTRAP_PRODUCTION = SCRIPT_DIR / "Bootstrap-CotS-Production.py"
+STOP_REQUEST = TOOLS_REPO / ".cots" / "factory-stop-request.local.json"
 
 
 class FactoryControllerV4(legacy.FactoryController):
@@ -27,6 +28,12 @@ class FactoryControllerV4(legacy.FactoryController):
         super().__init__()
         self.v4_generation = f"factory-{os.getpid()}-{uuid.uuid4().hex[:10]}"
         self.v4_host_profile: str | None = None
+        # A stop request applies to one live generation only; never let a stale
+        # request from a previous stopped run poison a new launch.
+        try:
+            STOP_REQUEST.unlink()
+        except FileNotFoundError:
+            pass
 
     def selected_profile(self):
         task = legacy.authoritative_next_required_task()
@@ -115,6 +122,24 @@ class FactoryControllerV4(legacy.FactoryController):
             scheduled_task=task,
             factory_generation=self.v4_generation,
         )
+
+    def handle_gate(self, exit_code: int | None, forced=None) -> bool:
+        if STOP_REQUEST.exists():
+            checkpoint = legacy.read_json(legacy.SUPERVISOR_STATE, {})
+            self.mark_supervisor_stopped(checkpoint)
+            try:
+                STOP_REQUEST.unlink()
+            except FileNotFoundError:
+                pass
+            self._exit_code = 0
+            self.save(
+                "Operator safe stop completed at supervisor boundary",
+                factory="STOPPED",
+                supervisor_state="STOPPED",
+                recovery={"state": "IDLE"},
+            )
+            return False
+        return super().handle_gate(exit_code, forced)
 
 
 def main() -> int:
