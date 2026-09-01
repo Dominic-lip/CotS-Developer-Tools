@@ -33,6 +33,7 @@ jobs:
           Scripts/CotSControlCenter24x7Enhanced.py
           Scripts/CotSSupportBundle.py
           Scripts/CotSUsageLedger.py
+          Scripts/CotSCodexQuotaProbe.py
           Scripts/CotSProductivityGovernor.py
           Scripts/CotSHardwareTelemetry.py
           Scripts/CotSLocalAI.py
