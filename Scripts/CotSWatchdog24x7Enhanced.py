@@ -11,6 +11,7 @@ from typing import Any
 import CotSWatchdog24x7 as base
 from CotS24x7Common import FACTORY_STATE, STOP_FILE, SUPERVISOR_STATE, clean_text, meaningful_progress, progress_signature, read_json
 from CotSHardwareTelemetry import HardwareMonitor
+from CotSLegacyGovernorRecovery import recover_persisted
 from CotSLocalAI import LocalAI
 from CotSNotifications import MilestoneNotifier
 from CotSOperationalMetrics import OperationalMetrics
@@ -113,12 +114,43 @@ class EnhancedWatchdog(base.Watchdog):
                 self.graceful_stop_factory(f"hardware safety gate: {reason}")
                 return self.factory.poll() if self.factory.poll() is not None else 130, time.time() - started, False, "hardware_pause"
 
+            # The new productivity governor is the authoritative quota guard.
+            # If it has observed enough real provider turns to trip, honour it
+            # before attempting any compatibility recovery of the older guard.
             if self.governor.tripped():
                 reason = str((self.cached_governor or {}).get("trip_reason") or "productivity governor tripped")
                 self.telemetry.emit("GOVERNOR_PAUSE", reason, governor=self.cached_governor)
                 self.graceful_stop_factory(reason)
                 self._run_local_diagnosis(reason)
                 return self.factory.poll() if self.factory.poll() is not None else 130, time.time() - started, False, "governor_pause"
+
+            # Older V3.x supervisors intentionally park forever in
+            # GOVERNOR_PAUSED when their package-local zero/micro-delta guard
+            # wants a changed strategy.  In a 24x7 system that creates a
+            # deadlock: no provider turn can happen, so no new evidence can
+            # ever clear the block.  Rebaseline only those strategy streaks,
+            # preserve all historical counters, then restart the factory.  A
+            # hard package-budget block is deliberately not overridden.
+            supervisor = read_json(SUPERVISOR_STATE)
+            if str(supervisor.get("state") or "") == "GOVERNOR_PAUSED":
+                task_id = str(supervisor.get("task") or "").strip()
+                legacy_reason = clean_text(supervisor.get("current_action") or supervisor.get("failure") or "legacy usage governor paused", 900)
+                recovery = recover_persisted(task_id, source="24x7-watchdog") if task_id else {"recovered": False, "reason": "missing task id"}
+                if recovery.get("recovered"):
+                    self.telemetry.emit(
+                        "LEGACY_GOVERNOR_RECOVERED",
+                        f"Rebaselined {task_id}/{recovery.get('package')} after strategy-only legacy governor block",
+                        recovery=recovery,
+                        previous_action=legacy_reason,
+                    )
+                    self.state = "RECOVERING"
+                    self.current_action = f"Legacy governor strategy block cleared for {task_id}; restarting factory"
+                    self.persist_health(force=True)
+                    self.graceful_stop_factory("legacy usage-governor strategy rebaseline")
+                    return self.factory.poll() if self.factory.poll() is not None else 130, time.time() - started, False, "legacy_governor_recover"
+                self.state = "LEGACY_GOVERNOR_BLOCKED"
+                self.current_action = f"Legacy governor block preserved: {clean_text(recovery.get('reason') or legacy_reason, 500)}"
+                self.persist_health(force=True)
 
             self.persist_health(); time.sleep(base.POLL_SECONDS)
         if self.stop_event.is_set() and self.factory.poll() is None: self.graceful_stop_factory("watchdog shutdown")
@@ -199,6 +231,14 @@ class EnhancedWatchdog(base.Watchdog):
                     ctl = self._wait_governor()
                     if ctl == "stop": continue
                     self.restart_count += 1; continue
+                if control == "legacy_governor_recover":
+                    # Do not reset the new productivity governor here.  It must
+                    # continue counting actual no-value provider turns across
+                    # compatibility recoveries and will trip at its own limit.
+                    self.restart_count += 1
+                    self.telemetry.emit("LEGACY_GOVERNOR_RESTART", "Restarting factory after local strategy rebaseline; provider quota not used during restart")
+                    self.wait_with_telemetry(5, "RECOVERING", "Restarting after legacy governor strategy rebaseline")
+                    continue
 
                 if progressed:
                     self.no_progress_streak = 0; self.last_progress_at = time.time()
