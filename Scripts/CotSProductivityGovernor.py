@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Local productivity governor for the CotS 24x7 autonomous factory.
 
-The governor never calls an AI provider.  It watches durable supervisor/repo
+The governor never calls an AI provider. It watches durable supervisor/repo
 signals and trips after several expensive provider turns fail to produce
 engineering evidence (file changes, commits, tests, or acceptance proof).
 """
@@ -96,7 +96,16 @@ class ProductivityGovernor:
         supervisor = supervisor if isinstance(supervisor, dict) else read_json(SUPERVISOR_STATE)
         turn_count = safe_nonnegative_int(supervisor.get("turn_count"), 0)
         previous_turn = safe_nonnegative_int(self.data.get("last_turn_count"), turn_count)
-        if turn_count <= previous_turn:
+
+        # Supervisor generations may legitimately start a new local turn
+        # counter. Re-baseline instead of permanently ignoring all future turns.
+        if turn_count < previous_turn:
+            self.data["last_turn_count"] = turn_count
+            self.data["last_evidence"] = evidence_signature(supervisor)
+            self.data["last_counter_reset_at"] = time.time()
+            self.save()
+            return self.snapshot()
+        if turn_count == previous_turn:
             return self.snapshot()
 
         before = self.data.get("last_evidence") if isinstance(self.data.get("last_evidence"), dict) else evidence_signature(supervisor)
