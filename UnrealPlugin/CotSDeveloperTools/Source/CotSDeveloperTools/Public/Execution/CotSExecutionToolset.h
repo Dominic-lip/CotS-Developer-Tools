@@ -18,10 +18,9 @@ class COTSDEVELOPERTOOLS_API UCotSExecutionToolset : public UToolsetDefinition
     GENERATED_BODY()
 
 public:
-    /**
-     * Executes one allowlisted, read-only editor query. Supported queries are:
-     * project.context, project.name, engine.version, map.current, and cvar.<name>.
-     */
+    virtual FString GetToolsetVersion() const override { return TEXT("2.0"); }
+
+    /** Executes one allowlisted, read-only editor query. */
     UFUNCTION(meta = (AICallable), Category = "CotS Execution")
     static FString ExecuteReadOnlyQuery(const FString& Query, bool bDryRun = false);
 };
