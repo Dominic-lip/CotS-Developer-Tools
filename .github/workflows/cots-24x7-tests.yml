@@ -3,7 +3,12 @@ name: CotS 24x7 reliability tests
 on:
   push:
     branches:
+      - main
       - reliability/24x7-autonomy
+      - feature/cots-observability-governor-real
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -23,9 +28,23 @@ jobs:
           Scripts/CotSAgentSupervisor24x7.py
           Scripts/CotSFactoryController24x7.py
           Scripts/CotSWatchdog24x7.py
+          Scripts/CotSWatchdog24x7Enhanced.py
+          Scripts/CotSWatchdog24x7Final.py
           Scripts/CotSControlCenter24x7.py
+          Scripts/CotSControlCenter24x7Enhanced.py
+          Scripts/CotSControlCenter24x7Final.py
           Scripts/CotSSupportBundle.py
           Scripts/CotSUsageLedger.py
+          Scripts/CotSUsageLedgerSafe.py
+          Scripts/CotSCodexQuotaProbe.py
+          Scripts/CotSProductivityGovernor.py
+          Scripts/CotSHardwareTelemetry.py
+          Scripts/CotSLocalAI.py
+          Scripts/CotSRollbackGuard.py
+          Scripts/CotSNotifications.py
+          Scripts/CotSOperationalMetrics.py
+          Scripts/CotSChaosRunner.py
+          Scripts/CotSLiveChaosMaintenance.py
       - name: Run 24x7 regression tests
         shell: pwsh
-        run: python -m unittest Scripts.tests.test_cots_24x7 -v
+        run: python -m unittest Scripts.tests.test_cots_24x7 Scripts.tests.test_cots_24x7_enhanced -v
