@@ -2,9 +2,13 @@
 """Production entry point for the enhanced CotS 24x7 Control Center."""
 from __future__ import annotations
 
+import os
+import socket
+import subprocess
 import time
 import tkinter as tk
-from tkinter import ttk
+import webbrowser
+from tkinter import messagebox, ttk
 from typing import Any
 
 import CotSControlCenter24x7Enhanced as enhanced
@@ -16,6 +20,25 @@ enhanced.ProviderUsageLedger = ReadMostlyProviderUsageLedger
 # Any Control Center fallback launch must start the production watchdog, not
 # the intermediate enhanced entry point.
 enhanced.WATCHDOG = enhanced.SCRIPTS / "CotSWatchdog24x7Final.py"
+
+
+def telemetry_reachable(timeout: float = 0.35) -> bool:
+    """Return True only when the watchdog's localhost HTTP listener is live."""
+    try:
+        with socket.create_connection(("127.0.0.1", 8765), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def health_is_live(health: dict[str, Any], freshness_seconds: float = 15.0) -> bool:
+    """Reject stale health files and recycled PIDs when deciding ALIVE/OFFLINE."""
+    if not enhanced.pid_live(health.get("pid")):
+        return False
+    updated_at = health.get("updated_at")
+    if not isinstance(updated_at, (int, float)) or time.time() - float(updated_at) > freshness_seconds:
+        return False
+    return bool(health.get("alive", True))
 
 
 class QuotaGraph(tk.Canvas):
@@ -144,5 +167,80 @@ def refresh_usage(self: Any,usage:dict[str,Any],governor:dict[str,Any])->None:
 enhanced.ControlCenter._build_usage = build_usage
 enhanced.ControlCenter._refresh_usage = refresh_usage
 
+
+class ProductionControlCenter(enhanced.ControlCenter):
+    """Production GUI with live endpoint validation and safe telemetry recovery."""
+
+    def _build(self) -> None:
+        super()._build()
+        # The base UI originally bound these buttons directly to webbrowser.open.
+        # Rebind them so a dead local telemetry listener is diagnosed/recovered
+        # instead of opening an ERR_CONNECTION_REFUSED tab.
+        stack=list(self.winfo_children())
+        while stack:
+            widget=stack.pop(); stack.extend(widget.winfo_children())
+            if isinstance(widget, ttk.Button) and str(widget.cget("text")) in {"Open Telemetry","Open Local Endpoint"}:
+                widget.configure(command=self.open_telemetry)
+
+    def _refresh_overview(self,health:dict[str,Any],supervisor:dict[str,Any],usage:dict[str,Any],governor:dict[str,Any],report:dict[str,Any]) -> None:
+        effective=dict(health)
+        effective["alive"]=health_is_live(health)
+        if not effective["alive"]:
+            effective["state"]="STOPPED"
+        super()._refresh_overview(effective,supervisor,usage,governor,report)
+
+    def _launch_paused_watchdog(self) -> None:
+        enhanced.COTS.mkdir(parents=True,exist_ok=True)
+        enhanced.STOP_FILE.write_text(f"telemetry recovery requested {time.time()}\n",encoding="utf-8")
+        kwargs:dict[str,Any]={"cwd":enhanced.REPO}
+        if os.name=="nt":
+            kwargs["creationflags"]=subprocess.DETACHED_PROCESS|subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen(
+            [enhanced.detached_python(),str(enhanced.WATCHDOG)],
+            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,
+            **kwargs,
+        )
+
+    def open_telemetry(self) -> None:
+        if telemetry_reachable():
+            webbrowser.open(enhanced.LOCAL_URL)
+            return
+        health=enhanced.read_json(enhanced.HEALTH_PATH)
+        if health_is_live(health):
+            messagebox.showerror(
+                "CotS telemetry unavailable",
+                f"The watchdog process (PID {health.get('pid')}) is alive, but its localhost telemetry listener is not responding on 127.0.0.1:8765.\n\n"
+                "The Control Center will not open a dead browser tab. Use Support Bundle/Diagnostics so the listener failure can be investigated.",
+            )
+            return
+        if not messagebox.askyesno(
+            "CotS telemetry offline",
+            "The watchdog telemetry service is not running.\n\nStart the watchdog in PAUSED telemetry-only mode and then open the local telemetry page?\n\nThis will not start Codex or autonomous development.",
+        ):
+            return
+        try:
+            self._launch_paused_watchdog()
+        except Exception as error:
+            messagebox.showerror("CotS telemetry",f"Could not start the paused watchdog:\n{error}")
+            return
+
+        def wait_for_listener() -> bool:
+            deadline=time.time()+10.0
+            while time.time()<deadline:
+                if telemetry_reachable(): return True
+                time.sleep(0.25)
+            return False
+
+        def finished(ok: Any) -> None:
+            if ok is True:
+                webbrowser.open(enhanced.LOCAL_URL)
+            else:
+                messagebox.showerror(
+                    "CotS telemetry",
+                    "The watchdog was started in paused mode, but 127.0.0.1:8765 did not become available within 10 seconds. Check Diagnostics or create a Support Bundle.",
+                )
+        self._background(wait_for_listener,finished)
+
+
 if __name__ == "__main__":
-    enhanced.ControlCenter().mainloop()
+    ProductionControlCenter().mainloop()
