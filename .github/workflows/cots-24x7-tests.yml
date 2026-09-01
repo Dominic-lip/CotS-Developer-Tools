@@ -1,0 +1,31 @@
+name: CotS 24x7 reliability tests
+
+on:
+  push:
+    branches:
+      - reliability/24x7-autonomy
+  workflow_dispatch:
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile 24x7 Python entry points
+        shell: pwsh
+        run: >-
+          python -m py_compile
+          Scripts/CotS24x7Common.py
+          Scripts/CotSAgentSupervisor24x7.py
+          Scripts/CotSFactoryController24x7.py
+          Scripts/CotSWatchdog24x7.py
+          Scripts/CotSControlCenter24x7.py
+          Scripts/CotSSupportBundle.py
+          Scripts/CotSUsageLedger.py
+      - name: Run 24x7 regression tests
+        shell: pwsh
+        run: python -m unittest Scripts.tests.test_cots_24x7 -v
