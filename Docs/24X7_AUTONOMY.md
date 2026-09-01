@@ -14,34 +14,36 @@ The core policy is:
 - **the GUI is not life support**: the Control Center can be closed while the watchdog continues;
 - **Windows is the final supervisor**: a Scheduled Task restarts the watchdog itself if the watchdog process dies;
 - **remote access is private by default**: telemetry binds to localhost and can be proxied through Tailscale Serve. Control actions require a bearer token;
-- **runtime self-modification is canaried**: autonomous changes to the 24x7 control plane are locally compiled/tested; failed canaries restore pre-generation copies without `git reset` or `git clean`.
+- **runtime self-modification is canaried**: autonomous changes to the control plane are locally compiled/tested; failed canaries restore pre-generation copies without `git reset` or `git clean`.
 
 ## Process hierarchy
 
 ```text
 Windows Scheduled Task
-└─ CotSWatchdog24x7Enhanced.py
-   ├─ localhost telemetry/control :8765
-   ├─ ProviderUsageLedger + read-only Codex rate-limit probe
-   ├─ ProductivityGovernor
-   ├─ HardwareMonitor
-   ├─ LocalAI (optional Ollama on 127.0.0.1)
-   ├─ RollbackGuard + canary
-   ├─ OperationalMetrics + MilestoneNotifier
-   └─ CotSFactoryController24x7.py
-      ├─ CotSHostMcp.py
-      └─ CotSAgentSupervisor24x7.py
-         ├─ Codex app-server
-         └─ Claude CLI
+└─ CotSWatchdog24x7Final.py
+   └─ CotSWatchdog24x7Enhanced.py
+      ├─ localhost telemetry/control :8765
+      ├─ cross-process-safe ProviderUsageLedger
+      ├─ read-only Codex rate-limit probe
+      ├─ ProductivityGovernor
+      ├─ HardwareMonitor
+      ├─ LocalAI (optional Ollama on 127.0.0.1)
+      ├─ RollbackGuard + canary
+      ├─ OperationalMetrics + MilestoneNotifier
+      └─ CotSFactoryController24x7.py
+         ├─ CotSHostMcp.py
+         └─ CotSAgentSupervisor24x7.py
+            ├─ Codex app-server
+            └─ Claude CLI
 ```
 
-`CotSControlCenter24x7Enhanced.py` is a client/observer. Closing it does not stop the watchdog.
+`CotSControlCenter24x7Final.py` opens the enhanced UI through a non-blocking read-mostly usage-ledger adapter. Closing it does not stop the watchdog. The watchdog remains the preferred usage-ledger writer so the GUI cannot double-consume provider protocol offsets.
 
 ## Provider usage and quota
 
-`CotSUsageLedger.py` tails the provider protocol logs locally for turn counts, failures, token-usage events and explicit quota errors.
+`CotSUsageLedger.py` tails provider protocol logs locally for turn counts, failures, token-usage events and explicit quota errors. `CotSUsageLedgerSafe.py` serializes writers across the watchdog and GUI.
 
-In addition it performs a **read-only** Codex App Server call every minute:
+In addition it performs a **read-only** Codex App Server call approximately every minute:
 
 ```text
 initialize
@@ -97,6 +99,20 @@ Preferred small local models include Qwen coder and Llama-class models. When ava
 
 If Ollama is unavailable, deterministic rule-based classification remains active.
 
+For the optional local setup helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Scripts\Setup-CotSLocalAI.ps1
+```
+
+If Ollama is not installed and you explicitly want the helper to install it through `winget`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Scripts\Setup-CotSLocalAI.ps1 -InstallOllama
+```
+
+The default model is `qwen2.5-coder:14b`; set `COTS_LOCAL_AI_MODEL` to choose a different installed Ollama model. Model downloads can be several GB and are never performed silently by the watchdog.
+
 ## Hardware safety telemetry
 
 `CotSHardwareTelemetry.py` records local CPU/RAM/disk/GPU/Unreal/network state. NVIDIA telemetry is read from `nvidia-smi`; Windows memory and Unreal process memory are read locally from the OS.
@@ -112,7 +128,7 @@ Hardware recovery is checked locally; the factory automatically resumes after th
 
 ## Automatic runtime rollback
 
-`CotSRollbackGuard.py` snapshots only the managed 24x7 runtime files before a factory generation. If autonomous work changes those files, a post-generation canary runs local Python compilation and 24x7 regression tests.
+`CotSRollbackGuard.py` snapshots the managed autonomous control-plane files before a factory generation. If autonomous work changes those files, a post-generation canary runs local Python compilation and both 24x7 regression suites.
 
 If the canary fails, the exact pre-generation copies are restored. This is intentionally **not** implemented with `git reset`, `git clean`, history rewriting or a force checkout, so unrelated user work remains untouched.
 
@@ -138,7 +154,7 @@ A typical 24-hour line is conceptually:
 24h uptime 99.7% · 11 useful turns · 8 commits · 37 tests · 1 recovery · 0 human interventions
 ```
 
-`CotSOperationalMetrics.py` stores lightweight 30-second local samples for 48 hours and calculates the rolling 24-hour report without using an AI provider.
+`CotSOperationalMetrics.py` stores lightweight 30-second local samples for 48 hours and calculates the rolling 24-hour report without using an AI provider. Telemetry continues updating during deliberate cooldowns and genuine human-gate waits.
 
 ## Quota/crash protection
 
@@ -156,21 +172,29 @@ No provider call is made during cooldown. Provider-consuming FixIt remains conse
 
 `.cots/telemetry/YYYY-MM-DD.jsonl` contains the same events in structured form.
 
-The enhanced Control Center has a **Daily Logs** tab for browsing these files and a **Local AI** tab for optional local summaries.
+The enhanced Control Center has a **Daily Logs** tab for browsing these files and a **Local AI** tab for optional local summaries. Raw checkpoint/provider dictionaries belong in **Diagnostics**, not on the Overview screen.
 
 ## Chaos testing
 
-`CotSChaosRunner.py` runs safe deterministic simulations covering malformed provider output, fake quota exhaustion, process death semantics, productivity trips, hardware gates, rollback primitives and recovery state.
-
-It deliberately does **not** disable the real network or kill unrelated live processes. Live destructive chaos should only be added behind an explicit maintenance-mode boundary.
-
-Run:
+`CotSChaosRunner.py` runs safe deterministic simulations covering malformed provider output, fake quota exhaustion, process death semantics, productivity trips, hardware gates, rollback primitives and recovery state. It does not disable the real network or kill unrelated live processes.
 
 ```powershell
 python Scripts\CotSChaosRunner.py
 ```
 
 or use **Chaos / Recovery -> Run Safe Chaos Suite** in the Control Center.
+
+`CotSLiveChaosMaintenance.py` is the explicitly destructive maintenance harness. It does nothing unless `--live` is supplied, targets only exact PIDs recorded as CotS-owned, and verifies recovery after each fault. The watchdog-kill test additionally refuses to run unless the Windows recovery scheduled task is installed.
+
+```powershell
+python Scripts\CotSLiveChaosMaintenance.py --live --components provider,supervisor,host,factory,watchdog
+```
+
+Optional provider-network chaos is Windows/admin-only and blocks only safely identifiable native `codex.exe`/`claude.exe` executables. It arms an independent timed firewall-rule cleanup before applying the block and refuses broad Node/Python network blocking:
+
+```powershell
+python Scripts\CotSLiveChaosMaintenance.py --live --components provider,supervisor,host,factory --include-provider-network
+```
 
 ## Support bundle
 
@@ -198,7 +222,7 @@ This registers `CotS Autonomous Factory 24x7` at user logon with automatic proce
 Scripts\Launch-CotS-24x7.bat
 ```
 
-This starts the enhanced watchdog and opens the enhanced Control Center.
+This starts the production-safe enhanced watchdog and opens the enhanced Control Center.
 
 ## Remote telemetry
 
