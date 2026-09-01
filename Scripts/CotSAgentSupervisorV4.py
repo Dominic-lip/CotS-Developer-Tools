@@ -2,8 +2,9 @@
 """V4 compatibility layer over the proven CotS supervisor.
 
 Keeps its battle-tested orchestration while fixing the remote-main protocol
-regression, selecting the correct task workspace, and rotating Codex threads at
-turn boundaries so provider conversation state cannot grow without bound.
+regression, selecting the correct task workspace, rotating Codex threads at
+turn boundaries, and forcing a clean supervisor restart before crossing a
+workspace-profile boundary.
 """
 from __future__ import annotations
 
@@ -21,13 +22,30 @@ from CotSProtocolAdapterV4 import activity_count, completed_item_from_notificati
 from CotSWorkspaceProfiles import profile_for_task
 
 TOOLS_REPO = SCRIPT_DIR.parent
-ACTIVE_TASK = legacy.next_required_task()
+_original_next_required_task = legacy.next_required_task
+ACTIVE_TASK = _original_next_required_task()
 PROFILE = profile_for_task(ACTIVE_TASK)
 
 
-def _profile_instructions(provider: str) -> str:
+def _v4_next_required_task(path: Path = legacy.FOUNDATION_COMPLETION_STATE) -> str | None:
+    """Never cross tooling/production roots inside one provider supervisor.
+
+    Returning None at the first cross-profile boundary makes the legacy
+    supervisor finish its current process cleanly. The outer V4 factory reads
+    the authoritative ledger itself, sees the real outstanding task, restarts
+    the Host/Supervisor with the new profile, and resumes there.
+    """
+    actual = _original_next_required_task(path)
+    if actual is not None and profile_for_task(actual).name != PROFILE.name:
+        return None
+    return actual
+
+
+legacy.next_required_task = _v4_next_required_task
+
+
+def _profile_instructions() -> str:
     git_script = TOOLS_REPO / "Scripts" / "CotS-GitCompletion.py"
-    build_script = PROFILE.build_script
     task = ACTIVE_TASK or "ROADMAP_COMPLETE"
     return f"""CotS Factory V4 workspace contract.
 Control plane: {TOOLS_REPO}
@@ -38,7 +56,7 @@ Expected repository: {PROFILE.repository}
 Unreal project: {PROFILE.project_path}
 Shardlands donor: C:\\Dev\\Shardlands (READ ONLY; never mutate it).
 
-Read {TOOLS_REPO / 'AGENTS.md'} and the task specification under
+Read {TOOLS_REPO / 'AGENTS.md'} and the active task specification under
 {TOOLS_REPO / 'Tasks'} before work. The process working directory is the active
 workspace above. Do not treat CotSDeveloperTools as production output when the
 profile is production. Do not treat Shardlands as an output workspace.
@@ -46,29 +64,30 @@ profile is production. Do not treat Shardlands as an output workspace.
 For Git status/diff/completion use only:
 python "{git_script}" --profile {PROFILE.name} ...
 For the canonical build use only:
-"{build_script}"
+"{PROFILE.build_script}"
 Production autonomous commits must be on autonomous/task-* branches; direct
 production commits to main are refused by the Git helper.
 
 Host MCP is profile-bound. Before any mutation verify GetWorkspaceStatus says
 profile={PROFILE.name}, repository={PROFILE.repository}, and the Unreal identity
-matches {PROFILE.project_path}. Acquire the mutation lock using this supervisor
-process PID and generation when those fields are requested.
+matches {PROFILE.project_path}. The Host binds the mutation lease to the live
+Factory generation; the agent must still acquire/release the logical agent_id
+lease around mutating work.
 
-Work in one coherent bounded turn from the compact checkpoint. Prefer targeted
+Work in coherent bounded turns from the compact checkpoint. Prefer targeted
 validation. Never claim a build/test/PIE proof that was not actually run.
 """
 
 
-V4_PREFIX = _profile_instructions("shared")
+V4_PREFIX = _profile_instructions()
 legacy.CODEX_START = V4_PREFIX + "\n" + legacy.CODEX_START
 legacy.CLAUDE_START = V4_PREFIX + "\n" + legacy.CLAUDE_START
 legacy.CODEX_CONTINUE_TEMPLATE = V4_PREFIX + "\n" + legacy.CODEX_CONTINUE_TEMPLATE
 legacy.CLAUDE_CONTINUE_TEMPLATE = V4_PREFIX + "\n" + legacy.CLAUDE_CONTINUE_TEMPLATE
 legacy.START_PROMPTS = {"codex": legacy.CODEX_START, "claude": legacy.CLAUDE_START}
 
-# The legacy supervisor stores its checkpoint/log files in constants computed
-# at import time; changing REPO here changes only task-facing cwd/path probes.
+# The legacy supervisor stores checkpoint/log paths in constants computed at
+# import time. Changing REPO here changes task-facing cwd/path/Git probes only.
 legacy.REPO = PROFILE.workspace_root
 
 
@@ -84,8 +103,8 @@ def v4_codex_app_settings(developer_instructions: str) -> dict[str, Any]:
 
 legacy.codex_app_settings = v4_codex_app_settings
 
-# Claude's shell allowlist must use absolute tool-control paths because its cwd
-# is the target workspace in production mode.
+# Claude's shell allowlist uses absolute control-plane paths because its cwd is
+# the selected target workspace in production mode.
 git_command = str(TOOLS_REPO / "Scripts" / "CotS-GitCompletion.py")
 legacy.CLAUDE_ALLOWED_TOOLS = (
     "Read Edit Write Grep Glob "
@@ -115,8 +134,6 @@ def _v4_handle_message(self: Any, message: dict[str, Any]) -> None:
             self._v4_completed_items = {}
         key = thread_id or "__unknown__"
         self._v4_completed_items.setdefault(key, []).append(item)
-        # item/completed has no other legacy side effect; retain the item and
-        # notify waiters instead of throwing it away.
         with self.lock:
             self.lock.notify_all()
         return
@@ -155,9 +172,8 @@ _original_codex_run_turn = legacy.CodexAgent.run_turn
 
 def _v4_codex_run_turn(self: Any, prompt: str, bus: Any = None, shutdown_event: Any = None) -> Any:
     # One engineering turn per provider thread. The App Server process remains
-    # persistent, but each new turn starts from the compact checkpoint rather
-    # than an ever-growing provider conversation. Static instructions/tool
-    # schemas remain cacheable by the provider.
+    # persistent, but each subsequent turn starts from compact checkpoint
+    # state rather than accumulating the entire provider conversation.
     if getattr(self, "_v4_turns_on_thread", 0) >= 1:
         assert self.app is not None
         started = self.app.request("thread/start", legacy.codex_app_settings(legacy.CODEX_START))
@@ -171,10 +187,6 @@ def _v4_codex_run_turn(self: Any, prompt: str, bus: Any = None, shutdown_event: 
 
 
 legacy.CodexAgent.run_turn = _v4_codex_run_turn
-
-# Claude is already one process per turn; keep session resume only within the
-# same selected profile. The subprocess cwd comes from legacy.REPO, patched
-# above to the active workspace.
 
 
 def main() -> int:
