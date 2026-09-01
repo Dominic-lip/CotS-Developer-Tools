@@ -40,6 +40,15 @@ FString UCotSAssetQueryToolset::SearchAssetsFiltered(
             TEXT("invalid_max_results"),
             TEXT("MaxResults must be between 1 and 5000.")).ToJson();
     }
+    if (PackagePath.IsEmpty() && ClassPath.IsEmpty())
+    {
+        // An unconstrained production-wide scan is intentionally refused. The
+        // legacy SearchAssets remains available for small ToolLab diagnostics.
+        return FCotSOperationResult::Fail(
+            Operation,
+            TEXT("filter_required"),
+            TEXT("Provide PackagePath and/or ClassPath for production-scale searches.")).ToJson();
+    }
 
     FARFilter Filter;
     Filter.bRecursivePaths = bRecursivePaths;
@@ -72,15 +81,6 @@ FString UCotSAssetQueryToolset::SearchAssetsFiltered(
 
     IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
     TArray<FAssetData> Candidates;
-    if (Filter.IsEmpty())
-    {
-        // An unconstrained production-wide scan is intentionally refused. The
-        // legacy SearchAssets remains available for small ToolLab diagnostics.
-        return FCotSOperationResult::Fail(
-            Operation,
-            TEXT("filter_required"),
-            TEXT("Provide PackagePath and/or ClassPath for production-scale searches.")).ToJson();
-    }
     Registry.GetAssets(Filter, Candidates);
 
     Candidates.Sort([](const FAssetData& Left, const FAssetData& Right)
