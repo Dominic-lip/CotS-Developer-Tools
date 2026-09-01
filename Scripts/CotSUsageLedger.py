@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Local provider protocol ledger. Never invokes Codex or Claude."""
+"""Local provider protocol ledger and quota view. Never invokes Codex or Claude."""
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -11,19 +12,88 @@ from CotS24x7Common import COTS, atomic_json, read_json, safe_nonnegative_int
 CODEX = COTS / "codex-protocol.log"
 CLAUDE = COTS / "claude-protocol.log"
 STATE = COTS / "provider-usage-ledger.local.json"
+HISTORY = COTS / "telemetry" / "provider-usage-samples.jsonl"
+CLOCK_RESET = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AP]M)", re.I)
+EPOCH_RESET = re.compile(r"(?:reset(?:s| at)?|try again at)\D{0,20}(\d{10}(?:\.\d+)?)", re.I)
+
+
+def _number(mapping: object, *names: str) -> float | None:
+    if not isinstance(mapping, dict): return None
+    for name in names:
+        value = mapping.get(name)
+        if isinstance(value, bool): continue
+        if isinstance(value, (int, float)): return float(value)
+        if isinstance(value, str):
+            try: return float(value.strip().rstrip("%"))
+            except ValueError: pass
+    return None
+
+
+def _epoch(mapping: object, *names: str) -> float | None:
+    value = _number(mapping, *names)
+    if value is None: return None
+    if value > 10_000_000_000: value /= 1000.0
+    return value if value > 0 else None
+
+
+def parse_reset_from_message(message: str, now: float | None = None) -> float | None:
+    now = time.time() if now is None else now
+    epoch = EPOCH_RESET.search(message or "")
+    if epoch:
+        try: return float(epoch.group(1))
+        except ValueError: pass
+    match = CLOCK_RESET.search(message or "")
+    if not match: return None
+    hour, minute, meridiem = int(match.group(1)), int(match.group(2)), match.group(3).upper()
+    if meridiem == "PM" and hour != 12: hour += 12
+    if meridiem == "AM" and hour == 12: hour = 0
+    local = time.localtime(now)
+    candidate = time.mktime((local.tm_year, local.tm_mon, local.tm_mday, hour, minute, 0, 0, 0, -1))
+    if candidate <= now: candidate += 24 * 3600
+    return candidate
+
+
+def _normalize_window(label: str, raw: object) -> dict[str, Any] | None:
+    if not isinstance(raw, dict) or not raw: return None
+    used = _number(raw, "usedPercent", "used_percent", "percentUsed", "usagePercent", "usage_percent")
+    remaining = _number(raw, "remainingPercent", "remaining_percent", "percentRemaining")
+    limit = _number(raw, "limit", "total", "quota")
+    remaining_units = _number(raw, "remaining", "remainingUnits", "remaining_units")
+    if used is None and remaining is not None: used = 100.0 - remaining
+    if used is None and limit and remaining_units is not None and limit > 0:
+        used = 100.0 * (limit - remaining_units) / limit
+    if used is not None: used = max(0.0, min(100.0, used))
+    if remaining is None and used is not None: remaining = 100.0 - used
+    reset = _epoch(raw, "resetAt", "resetsAt", "reset_at", "resetEpoch", "reset_epoch")
+    window_minutes = _number(raw, "windowDurationMins", "windowMinutes", "window_minutes", "windowDurationMinutes")
+    return {
+        "label": label, "used_percent": used, "remaining_percent": remaining,
+        "reset_at": reset, "window_minutes": window_minutes, "raw": raw,
+    }
+
+
+def format_reset(reset_at: float | None) -> str:
+    if not isinstance(reset_at, (int, float)): return "Not reported"
+    remaining = reset_at - time.time()
+    clock = time.strftime("%Y-%m-%d %H:%M", time.localtime(reset_at))
+    if remaining <= 0: return f"{clock} (due now)"
+    hours, minutes = divmod(int(remaining // 60), 60)
+    return f"{clock} (in {hours}h {minutes:02d}m)"
 
 
 class ProviderUsageLedger:
     def __init__(self) -> None:
         self.data = read_json(STATE, {
-            "schema_version": 1,
+            "schema_version": 2,
             "offsets": {},
             "codex": {"turns_started":0,"turns_completed":0,"turns_failed":0,"usage_limit_hits":0,"duration_ms":0},
             "claude": {"results":0,"errors":0,"num_turns":0,"duration_ms":0,"duration_api_ms":0,"reported_cost_usd":0.0},
         })
+        self.data["schema_version"] = 2
         self.data.setdefault("offsets", {})
         self.data.setdefault("codex", {})
         self.data.setdefault("claude", {})
+        self._last_sample_at = 0.0
 
     def _tail(self, path: Path, key: str):
         try:
@@ -66,10 +136,15 @@ class ProviderUsageLedger:
                     codex["usage_limit_hits"] = safe_nonnegative_int(codex.get("usage_limit_hits")) + 1
                     codex["last_usage_limit_message"] = str(error.get("message") or "")[:1000]
                     codex["last_usage_limit_at"] = time.time()
+                    parsed = parse_reset_from_message(codex["last_usage_limit_message"])
+                    if parsed is not None: codex["last_usage_limit_reset_at"] = parsed
             elif method == "account/rateLimits/updated":
                 codex["last_rate_limits"] = (msg.get("params") or {}).get("rateLimits") or {}
                 emitted = msg.get("emittedAtMs")
                 codex["last_rate_limits_at"] = (float(emitted)/1000.0) if isinstance(emitted,(int,float)) else time.time()
+            elif method in {"thread/tokenUsage/updated", "turn/tokenUsage/updated"}:
+                payload = (msg.get("params") or {}).get("tokenUsage") or (msg.get("params") or {}).get("usage") or {}
+                if isinstance(payload, dict): codex["last_token_usage"] = payload
 
         for line in self._tail(CLAUDE, "claude"):
             msg = self._json_line(line)
@@ -82,13 +157,61 @@ class ProviderUsageLedger:
                 if isinstance(msg.get(field), (int,float)): claude[field] = safe_nonnegative_int(claude.get(field)) + int(msg[field])
             if isinstance(msg.get("total_cost_usd"), (int,float)):
                 claude["reported_cost_usd"] = float(claude.get("reported_cost_usd") or 0) + float(msg["total_cost_usd"])
+            if isinstance(msg.get("usage"), dict): claude["last_usage"] = msg["usage"]
             claude["last_result_at"] = time.time()
         if changed:
             self.data["updated_at"] = time.time(); atomic_json(STATE, self.data)
+        self._maybe_sample()
         return changed
 
+    def codex_quota(self) -> dict[str, Any]:
+        codex = self.data.get("codex") or {}; rates = codex.get("last_rate_limits") if isinstance(codex.get("last_rate_limits"), dict) else {}
+        primary = _normalize_window("Primary", rates.get("primary")) if isinstance(rates, dict) else None
+        secondary = _normalize_window("Secondary", rates.get("secondary")) if isinstance(rates, dict) else None
+        windows = [item for item in (primary, secondary) if item]
+        fallback_reset = codex.get("last_usage_limit_reset_at")
+        message = str(codex.get("last_usage_limit_message") or "")
+        if fallback_reset is None and message: fallback_reset = parse_reset_from_message(message)
+        return {
+            "windows": windows,
+            "exhausted": bool(codex.get("usage_limit_hits") and codex.get("last_usage_limit_at") and (not windows or any((w.get("remaining_percent") == 0) for w in windows))),
+            "fallback_reset_at": fallback_reset,
+            "fallback_reset_text": format_reset(fallback_reset),
+            "last_rate_limits_at": codex.get("last_rate_limits_at"),
+            "last_usage_limit_message": message,
+            "credits": rates.get("credits") if isinstance(rates, dict) else None,
+            "plan_type": rates.get("planType") if isinstance(rates, dict) else None,
+        }
+
+    def _maybe_sample(self) -> None:
+        now = time.time()
+        if now - self._last_sample_at < 60: return
+        self._last_sample_at = now
+        quota = self.codex_quota(); codex = self.data.get("codex") or {}
+        record = {
+            "ts": now, "turns_started": safe_nonnegative_int(codex.get("turns_started")),
+            "turns_completed": safe_nonnegative_int(codex.get("turns_completed")),
+            "turns_failed": safe_nonnegative_int(codex.get("turns_failed")), "usage_limit_hits": safe_nonnegative_int(codex.get("usage_limit_hits")),
+            "windows": [{"label": w.get("label"), "used_percent": w.get("used_percent"), "reset_at": w.get("reset_at")} for w in quota.get("windows", [])],
+        }
+        HISTORY.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with HISTORY.open("a", encoding="utf-8") as handle: handle.write(json.dumps(record, separators=(",", ":")) + "\n")
+        except OSError: pass
+
+    def history(self, hours: float = 24.0, limit: int = 500) -> list[dict[str, Any]]:
+        cutoff = time.time() - max(1.0, hours) * 3600
+        try:
+            rows = []
+            for line in HISTORY.read_text(encoding="utf-8", errors="replace").splitlines():
+                try: value = json.loads(line)
+                except json.JSONDecodeError: continue
+                if isinstance(value, dict) and isinstance(value.get("ts"), (int,float)) and value["ts"] >= cutoff: rows.append(value)
+            return rows[-limit:]
+        except OSError: return []
+
     def snapshot(self) -> dict[str, Any]:
-        return dict(self.data)
+        return {**self.data, "codex_quota": self.codex_quota()}
 
 
 if __name__ == "__main__":
