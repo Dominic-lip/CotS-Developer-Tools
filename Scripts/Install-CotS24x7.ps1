@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 $TaskName = "CotS Autonomous Factory 24x7"
 $Repo = Split-Path -Parent $PSScriptRoot
-$Watchdog = Join-Path $PSScriptRoot "CotSWatchdog24x7Enhanced.py"
+$Watchdog = Join-Path $PSScriptRoot "CotSWatchdog24x7Final.py"
 
 if ($Uninstall) {
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -41,6 +41,6 @@ Write-Host ""
 Write-Host "Installed: $TaskName"
 Write-Host "Watchdog:  $Watchdog"
 Write-Host "Telemetry: http://127.0.0.1:8765/"
-Write-Host "The enhanced watchdog includes quota protection, hardware gates, rollback canaries and local telemetry."
+Write-Host "The production watchdog includes quota protection, hardware gates, rollback canaries and local telemetry."
 Write-Host "It starts at user logon and Windows restarts it after process failure."
 Write-Host "For real 24/7 operation keep Windows signed in and prevent AC sleep."
