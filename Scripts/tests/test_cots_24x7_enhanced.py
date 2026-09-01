@@ -35,6 +35,12 @@ class TestQuotaParsing(unittest.TestCase):
         self.assertAlmostEqual(value["remaining_percent"], 36.5)
         self.assertEqual(value["reset_at"], 1900000000)
 
+    def test_rate_windows_receive_human_duration_labels(self):
+        five = usage._normalize_window("Primary", {"usedPercent": 10, "windowDurationMins": 300})
+        weekly = usage._normalize_window("Secondary", {"usedPercent": 20, "windowDurationMins": 10080})
+        self.assertEqual(five["label"], "5-hour")
+        self.assertEqual(weekly["label"], "Weekly")
+
     def test_missing_window_percentage_stays_unknown(self):
         value = usage._normalize_window("Primary", {"resetAt": 1900000000})
         self.assertIsNone(value["used_percent"])
@@ -61,6 +67,19 @@ class TestProductivityGovernor(unittest.TestCase):
     def test_commit_counts_as_productive_evidence(self):
         progressed, reasons = governor.evidence_progressed({"head":"a","working_tree":"x"},{"head":"b","working_tree":"x"})
         self.assertTrue(progressed); self.assertIn("commit", reasons)
+
+    def test_supervisor_turn_counter_reset_rebaselines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old_state = governor.STATE; governor.STATE = Path(directory) / "governor.json"
+            evidence = {"head":"a","working_tree":"x","targeted_tests":0,"full_suites":0,"validation_count":0,"acceptance_remaining":1,"last_successful_gate":None,"task":"TASK-013","phase":"x"}
+            try:
+                with mock.patch.object(governor, "read_json", return_value={"turn_count":9}), mock.patch.object(governor, "evidence_signature", return_value=dict(evidence)):
+                    g=governor.ProductivityGovernor(); g.observe({"turn_count":0,"task":"TASK-013","phase":"x"})
+                self.assertEqual(g.snapshot()["last_turn_count"],0)
+                with mock.patch.object(governor, "evidence_signature", return_value=dict(evidence)):
+                    g.observe({"turn_count":1,"task":"TASK-013","phase":"x"})
+                self.assertEqual(g.snapshot()["observed_turns"],1)
+            finally: governor.STATE=old_state
 
 
 class TestHardwareSafety(unittest.TestCase):
@@ -119,11 +138,17 @@ class TestRollbackPrimitives(unittest.TestCase):
                 rollback.REPO, rollback.SNAPSHOT_ROOT, rollback.STATE, rollback.MANAGED_FILES = old_repo, old_root, old_state, old_files
 
 
-class TestSafeProcessChaos(unittest.TestCase):
+class TestChaosSafety(unittest.TestCase):
     def test_owned_child_death_is_observable(self):
         process=subprocess.Popen([sys.executable,"-c","import time; time.sleep(0.05)"])
         process.wait(timeout=5)
         self.assertIsNotNone(process.poll())
+
+    def test_live_chaos_refuses_without_explicit_live_switch(self):
+        script=SCRIPTS/"CotSLiveChaosMaintenance.py"
+        result=subprocess.run([sys.executable,str(script)],text=True,capture_output=True,timeout=15,check=False)
+        self.assertEqual(result.returncode,2)
+        self.assertIn("Refusing live chaos",result.stdout)
 
 
 if __name__ == "__main__": unittest.main()
