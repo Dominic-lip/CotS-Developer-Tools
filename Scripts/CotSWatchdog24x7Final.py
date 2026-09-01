@@ -29,6 +29,20 @@ class ProductionWatchdog(enhanced.EnhancedWatchdog):
             self.stop_event.wait(min(enhanced.base.POLL_SECONDS, max(0.05, end - time.time())))
         return None
 
+    def maybe_run_fixit(self) -> None:
+        """Ask local analysis whether an expensive cloud repair turn is useful."""
+        if self.no_progress_streak < enhanced.base.FIXIT_TRIGGER_STREAK:
+            return
+        analysis = self._run_local_diagnosis("repeated no-progress factory failures before cloud FixIt")
+        if analysis.get("cloud_wake_recommended") is False:
+            self.telemetry.emit(
+                "FIXIT_SKIPPED_LOCAL_AI",
+                "Local diagnosis says a cloud repair turn is not useful yet; keeping recovery local",
+                analysis=analysis,
+            )
+            return
+        super().maybe_run_fixit()
+
 
 # enhanced.main() instantiates its module-global EnhancedWatchdog class.
 enhanced.EnhancedWatchdog = ProductionWatchdog
