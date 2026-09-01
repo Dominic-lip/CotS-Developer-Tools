@@ -3,6 +3,7 @@
 #include "Foundation/CotSFoundationToolset.h"
 #include "Execution/CotSExecutionToolset.h"
 #include "Inspection/CotSInspectionToolset.h"
+#include "Inspection/CotSAssetQueryToolset.h"
 #include "Lifecycle/CotSLifecycleToolset.h"
 #include "Mutation/CotSMutationToolset.h"
 #include "Validation/CotSValidationToolset.h"
@@ -31,12 +32,14 @@ void FCotSDeveloperToolsModule::RegisterToolsets()
 
     UToolsetRegistry::RegisterToolsetClass(UCotSFoundationToolset::StaticClass());
     UToolsetRegistry::RegisterToolsetClass(UCotSInspectionToolset::StaticClass());
+    UToolsetRegistry::RegisterToolsetClass(UCotSAssetQueryToolset::StaticClass());
     UToolsetRegistry::RegisterToolsetClass(UCotSExecutionToolset::StaticClass());
     UToolsetRegistry::RegisterToolsetClass(UCotSMutationToolset::StaticClass());
     UToolsetRegistry::RegisterToolsetClass(UCotSLifecycleToolset::StaticClass());
     UToolsetRegistry::RegisterToolsetClass(UCotSValidationToolset::StaticClass());
     bToolsetsRegistered = UToolsetRegistry::IsToolsetClassRegistered(UCotSFoundationToolset::StaticClass())
         && UToolsetRegistry::IsToolsetClassRegistered(UCotSInspectionToolset::StaticClass())
+        && UToolsetRegistry::IsToolsetClassRegistered(UCotSAssetQueryToolset::StaticClass())
         && UToolsetRegistry::IsToolsetClassRegistered(UCotSExecutionToolset::StaticClass())
         && UToolsetRegistry::IsToolsetClassRegistered(UCotSMutationToolset::StaticClass())
         && UToolsetRegistry::IsToolsetClassRegistered(UCotSLifecycleToolset::StaticClass())
@@ -59,6 +62,7 @@ void FCotSDeveloperToolsModule::ShutdownModule()
         UToolsetRegistry::UnregisterToolsetClass(UCotSLifecycleToolset::StaticClass());
         UToolsetRegistry::UnregisterToolsetClass(UCotSValidationToolset::StaticClass());
         UToolsetRegistry::UnregisterToolsetClass(UCotSExecutionToolset::StaticClass());
+        UToolsetRegistry::UnregisterToolsetClass(UCotSAssetQueryToolset::StaticClass());
         UToolsetRegistry::UnregisterToolsetClass(UCotSInspectionToolset::StaticClass());
         UToolsetRegistry::UnregisterToolsetClass(UCotSFoundationToolset::StaticClass());
         bToolsetsRegistered = false;
