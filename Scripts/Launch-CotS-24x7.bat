@@ -9,9 +9,9 @@ if errorlevel 1 (
   set "PYW=pythonw.exe"
 )
 
-echo Starting CotS enhanced 24x7 watchdog...
-start "" /b %PYW% "%~dp0CotSWatchdog24x7Enhanced.py"
+echo Starting CotS production 24x7 watchdog...
+start "" /b %PYW% "%~dp0CotSWatchdog24x7Final.py"
 
 echo Opening CotS enhanced 24x7 Control Center...
-python "%~dp0CotSControlCenter24x7Enhanced.py"
+python "%~dp0CotSControlCenter24x7Final.py"
 exit /b %ERRORLEVEL%
