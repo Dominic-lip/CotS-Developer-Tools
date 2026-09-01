@@ -14,6 +14,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import CotSFactoryController as legacy
+from CotSHostClient import ready_for_profile
 from CotSWorkspaceProfiles import profile_for_task
 
 TOOLS_REPO = SCRIPT_DIR.parent
@@ -28,8 +29,6 @@ class FactoryControllerV4(legacy.FactoryController):
         super().__init__()
         self.v4_generation = f"factory-{os.getpid()}-{uuid.uuid4().hex[:10]}"
         self.v4_host_profile: str | None = None
-        # A stop request applies to one live generation only; never let a stale
-        # request from a previous stopped run poison a new launch.
         try:
             STOP_REQUEST.unlink()
         except FileNotFoundError:
@@ -63,11 +62,17 @@ class FactoryControllerV4(legacy.FactoryController):
                 + ((completed.stdout or "") + (completed.stderr or ""))[-1600:]
             )
 
+    def host_matches(self, profile) -> tuple[bool, dict | None, str | None]:
+        return ready_for_profile(profile.name, profile.repository, timeout=2.0)
+
     def start_host(self) -> None:
         task, profile = self.selected_profile()
         self.ensure_task_workspace(task)
         if self.host is not None and self.host.poll() is None and self.v4_host_profile == profile.name:
-            return
+            ready, data, _error = self.host_matches(profile)
+            if ready:
+                self.save("V4 Host MCP identity verified", host_state="READY", host_status=data)
+                return
         if self.host is not None and self.host.poll() is None:
             self.stop_owned(self.host, "Host MCP")
             self.host = None
@@ -87,19 +92,23 @@ class FactoryControllerV4(legacy.FactoryController):
             target_repository=profile.repository,
         )
         deadline = time.monotonic() + 20
+        last_error = "not ready"
         while time.monotonic() < deadline:
-            if legacy.host_ready():
-                self.save("V4 Host MCP ready", host_state="READY")
-                return
             if self.host.poll() is not None:
                 break
+            ready, data, error = self.host_matches(profile)
+            if ready:
+                self.save("V4 Host MCP ready with matching profile/repository", host_state="READY", host_status=data)
+                return
+            last_error = error or "Host status mismatch"
             time.sleep(0.2)
-        raise RuntimeError(f"V4 Host MCP failed to start for profile {profile.name}")
+        raise RuntimeError(f"V4 Host MCP failed to start for profile {profile.name}: {last_error}")
 
     def start_supervisor(self, prompt: str | None = None, agents: str = "codex,claude") -> None:
         task, profile = self.selected_profile()
         self.ensure_task_workspace(task)
-        if self.v4_host_profile != profile.name:
+        ready, _data, _error = self.host_matches(profile)
+        if self.v4_host_profile != profile.name or not ready:
             self.start_host()
         args = [sys.executable, str(SUPERVISOR_V4), "--no-dashboard", "--agents", agents]
         if prompt:
