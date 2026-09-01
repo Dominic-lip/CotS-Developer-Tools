@@ -29,10 +29,13 @@ jobs:
           Scripts/CotSFactoryController24x7.py
           Scripts/CotSWatchdog24x7.py
           Scripts/CotSWatchdog24x7Enhanced.py
+          Scripts/CotSWatchdog24x7Final.py
           Scripts/CotSControlCenter24x7.py
           Scripts/CotSControlCenter24x7Enhanced.py
+          Scripts/CotSControlCenter24x7Final.py
           Scripts/CotSSupportBundle.py
           Scripts/CotSUsageLedger.py
+          Scripts/CotSUsageLedgerSafe.py
           Scripts/CotSCodexQuotaProbe.py
           Scripts/CotSProductivityGovernor.py
           Scripts/CotSHardwareTelemetry.py
