@@ -34,8 +34,17 @@ def _balloon(title: str, message: str) -> None:
         "$n.ShowBalloonTip(8000); Start-Sleep -Seconds 9; $n.Dispose()"
     )
     try:
-        subprocess.Popen([exe, "-NoProfile", "-WindowStyle", "Hidden", "-Command", script],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        kwargs: dict[str, Any] = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "stdin": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        subprocess.Popen(
+            [exe, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
+            **kwargs,
+        )
     except OSError:
         pass
 
