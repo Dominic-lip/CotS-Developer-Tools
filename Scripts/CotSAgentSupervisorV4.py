@@ -3,8 +3,8 @@
 
 Keeps its battle-tested orchestration while fixing the remote-main protocol
 regression, selecting the correct task workspace, rotating Codex threads at
-turn boundaries, and forcing a clean supervisor restart before crossing a
-workspace-profile boundary.
+turn boundaries, reconciling the profile-aware Host MCP, and forcing a clean
+supervisor restart before crossing a workspace-profile boundary.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import CotSAgentSupervisor as legacy
+from CotSHostClient import call as host_call, status as host_status
 from CotSProtocolAdapterV4 import activity_count, completed_item_from_notification, extract_text, normalize_items
 from CotSWorkspaceProfiles import profile_for_task
 
@@ -28,13 +29,7 @@ PROFILE = profile_for_task(ACTIVE_TASK)
 
 
 def _v4_next_required_task(path: Path = legacy.FOUNDATION_COMPLETION_STATE) -> str | None:
-    """Never cross tooling/production roots inside one provider supervisor.
-
-    Returning None at the first cross-profile boundary makes the legacy
-    supervisor finish its current process cleanly. The outer V4 factory reads
-    the authoritative ledger itself, sees the real outstanding task, restarts
-    the Host/Supervisor with the new profile, and resumes there.
-    """
+    """Never cross tooling/production roots inside one provider supervisor."""
     actual = _original_next_required_task(path)
     if actual is not None and profile_for_task(actual).name != PROFILE.name:
         return None
@@ -46,48 +41,52 @@ legacy.next_required_task = _v4_next_required_task
 
 def _profile_instructions() -> str:
     git_script = TOOLS_REPO / "Scripts" / "CotS-GitCompletion.py"
+    agents_file = TOOLS_REPO / "AGENTS.md"
+    autonomy_file = TOOLS_REPO / "Docs" / "AUTONOMOUS_DEVELOPMENT.md"
     task = ACTIVE_TASK or "ROADMAP_COMPLETE"
     return f"""CotS Factory V4 workspace contract.
 Control plane: {TOOLS_REPO}
 Active task: {task}
 Active profile: {PROFILE.name}
-Writable workspace: {PROFILE.workspace_root}
+Only writable task workspace: {PROFILE.workspace_root}
 Expected repository: {PROFILE.repository}
 Unreal project: {PROFILE.project_path}
-Shardlands donor: C:\\Dev\\Shardlands (READ ONLY; never mutate it).
+Shardlands donor: C:\\Dev\\Shardlands — READ ONLY; never mutate, clean, rename, reset, or reorganize it.
 
-Read {TOOLS_REPO / 'AGENTS.md'} and the active task specification under
-{TOOLS_REPO / 'Tasks'} before work. The process working directory is the active
-workspace above. Do not treat CotSDeveloperTools as production output when the
-profile is production. Do not treat Shardlands as an output workspace.
+Read and obey these absolute control-plane files before work:
+- {agents_file}
+- {autonomy_file}
+- the active task specification under {TOOLS_REPO / 'Tasks'}
+The current process working directory is the active workspace, not the control-plane repository.
+Do not treat CotSDeveloperTools as production output when the profile is production.
 
-For Git status/diff/completion use only:
+Use only the profile-aware Git helper for Git mutation:
 python "{git_script}" --profile {PROFILE.name} ...
-For the canonical build use only:
-"{PROFILE.build_script}"
-Production autonomous commits must be on autonomous/task-* branches; direct
-production commits to main are refused by the Git helper.
+Never reset, clean, force-push, rewrite history, or stage unrelated files.
+Production autonomous commits must be on autonomous/task-* branches; direct production commits to main are refused.
+For the canonical build use only: "{PROFILE.build_script}"
+Do not retry raw UBT/dotnet/Build.bat after a sandbox/write failure.
 
-Host MCP is profile-bound. Before any mutation verify GetWorkspaceStatus says
-profile={PROFILE.name}, repository={PROFILE.repository}, and the Unreal identity
-matches {PROFILE.project_path}. The Host binds the mutation lease to the live
-Factory generation; the agent must still acquire/release the logical agent_id
-lease around mutating work.
+Host MCP is profile-bound. Before mutation verify GetWorkspaceStatus reports
+profile={PROFILE.name}, repository={PROFILE.repository}, and the expected Unreal project identity when the editor is running.
+Acquire/release the logical mutation lease around mutating lifecycle work. Only one mutating provider may act at a time.
+Use Epic native Unreal MCP where sufficient and existing CotS typed tools where they add validated behavior.
 
-Work in coherent bounded turns from the compact checkpoint. Prefer targeted
-validation. Never claim a build/test/PIE proof that was not actually run.
+Work in coherent bounded turns from the compact checkpoint. Re-read only changed facts. Prefer targeted validation while iterating and full suites only at gates. Never claim a build/test/PIE proof that was not actually run. A provider outcome marker is not roadmap completion; only the checked-in ledger is authoritative.
 """
 
 
 V4_PREFIX = _profile_instructions()
-legacy.CODEX_START = V4_PREFIX + "\n" + legacy.CODEX_START
-legacy.CLAUDE_START = V4_PREFIX + "\n" + legacy.CLAUDE_START
-legacy.CODEX_CONTINUE_TEMPLATE = V4_PREFIX + "\n" + legacy.CODEX_CONTINUE_TEMPLATE
-legacy.CLAUDE_CONTINUE_TEMPLATE = V4_PREFIX + "\n" + legacy.CLAUDE_CONTINUE_TEMPLATE
+V4_CONTINUE = """Continue from this structured checkpoint. Inspect source only where needed to verify changed facts; do not reconstruct conversation history by default.{checkpoint_facts}
+"""
+legacy.CODEX_START = V4_PREFIX + "\n" + legacy.PROVIDER_SELF_VALIDATION_RULE + "\n" + legacy.MARKER_INSTRUCTIONS
+legacy.CLAUDE_START = V4_PREFIX + "\n" + legacy.PROVIDER_SELF_VALIDATION_RULE + "\n" + legacy.MARKER_INSTRUCTIONS
+legacy.CODEX_CONTINUE_TEMPLATE = V4_PREFIX + "\n" + V4_CONTINUE + legacy.MARKER_INSTRUCTIONS
+legacy.CLAUDE_CONTINUE_TEMPLATE = V4_PREFIX + "\n" + V4_CONTINUE + legacy.MARKER_INSTRUCTIONS
 legacy.START_PROMPTS = {"codex": legacy.CODEX_START, "claude": legacy.CLAUDE_START}
 
-# The legacy supervisor stores checkpoint/log paths in constants computed at
-# import time. Changing REPO here changes task-facing cwd/path/Git probes only.
+# Checkpoint/log constants were computed at legacy import time and remain in
+# CotSDeveloperTools. REPO below changes only task-facing cwd/path/Git probes.
 legacy.REPO = PROFILE.workspace_root
 
 
@@ -103,8 +102,6 @@ def v4_codex_app_settings(developer_instructions: str) -> dict[str, Any]:
 
 legacy.codex_app_settings = v4_codex_app_settings
 
-# Claude's shell allowlist uses absolute control-plane paths because its cwd is
-# the selected target workspace in production mode.
 git_command = str(TOOLS_REPO / "Scripts" / "CotS-GitCompletion.py")
 legacy.CLAUDE_ALLOWED_TOOLS = (
     "Read Edit Write Grep Glob "
@@ -121,6 +118,63 @@ legacy.CLAUDE_ALLOWED_TOOLS = (
     "mcp__cots-host__RunCotSAutomation "
     "mcp__unreal-mcp__*"
 )
+
+# --- V4 Host MCP reconciliation -------------------------------------------
+def _v4_probe_host_mcp(bus: Any) -> None:
+    try:
+        payload = host_status(timeout=2.0)
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        if payload.get("success") is not True:
+            raise RuntimeError(str(payload.get("error") or "Host status unsuccessful"))
+        if data.get("profile") != PROFILE.name or str(data.get("repository") or "").lower() != PROFILE.repository.lower():
+            raise RuntimeError(
+                f"Host identity mismatch: profile={data.get('profile')!r} repository={data.get('repository')!r}"
+            )
+        lease = data.get("mutation_lock") if isinstance(data.get("mutation_lock"), dict) else {}
+        lease_owner = lease.get("agent_id") or "none"
+        bus.update(
+            host_mcp_state="READY",
+            toollab_state="OPEN" if data.get("editor_running") else "CLOSED",
+            unreal_mcp_state="READY" if data.get("unreal_mcp_ready") else "NOT_READY",
+            mutation_lease_owner=lease_owner,
+            workspace_profile=PROFILE.name,
+            target_repository=PROFILE.repository,
+        )
+        legacy.reconcile_task_phase(bus, lease_owner)
+    except Exception as error:
+        bus.update(
+            host_mcp_state=f"NOT_READY: {error}",
+            toollab_state="UNKNOWN",
+            unreal_mcp_state="UNKNOWN",
+            workspace_profile=PROFILE.name,
+            target_repository=PROFILE.repository,
+        )
+        legacy.reconcile_task_phase(bus, bus.data.get("mutation_lease_owner"))
+
+
+def _v4_reconcile_host_lock_owner(bus: Any) -> None:
+    owner = bus.data.get("mutation_lease_owner")
+    target = legacy.supervisor_task_owner(bus.data.get("task"))
+    if not owner or owner == "none" or not target or owner == target:
+        return
+    if not legacy.re.fullmatch(r"(?:codex|claude)-task-[a-z0-9-]+", str(owner), legacy.re.IGNORECASE):
+        return
+    try:
+        transferred = host_call(
+            "TransferMutationLock",
+            {"agent_id": owner, "target_agent_id": target},
+            timeout=5.0,
+        )
+        if transferred.get("success"):
+            bus.update(mutation_lease_owner=target, event=f"Host mutation lease migrated {owner} -> {target}")
+        else:
+            bus.update(event=f"Host mutation lease migration deferred: {transferred.get('error')}")
+    except Exception as error:
+        bus.update(event=f"Host mutation lease migration deferred: {error}")
+
+
+legacy.probe_host_mcp = _v4_probe_host_mcp
+legacy.reconcile_host_lock_owner = _v4_reconcile_host_lock_owner
 
 # --- Codex protocol normalization -----------------------------------------
 _original_handle_message = legacy.AppServer._handle_message
@@ -171,9 +225,8 @@ _original_codex_run_turn = legacy.CodexAgent.run_turn
 
 
 def _v4_codex_run_turn(self: Any, prompt: str, bus: Any = None, shutdown_event: Any = None) -> Any:
-    # One engineering turn per provider thread. The App Server process remains
-    # persistent, but each subsequent turn starts from compact checkpoint
-    # state rather than accumulating the entire provider conversation.
+    # One engineering turn per provider thread. App Server stays persistent,
+    # while provider conversation is rebuilt from the compact checkpoint.
     if getattr(self, "_v4_turns_on_thread", 0) >= 1:
         assert self.app is not None
         started = self.app.request("thread/start", legacy.codex_app_settings(legacy.CODEX_START))
