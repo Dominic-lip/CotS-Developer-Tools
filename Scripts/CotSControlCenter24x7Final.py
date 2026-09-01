@@ -13,6 +13,9 @@ from CotSUsageLedgerSafe import ReadMostlyProviderUsageLedger
 # The GUI never waits behind the watchdog's writer lease. If the watchdog is
 # polling quota, the UI displays the latest persisted snapshot instead.
 enhanced.ProviderUsageLedger = ReadMostlyProviderUsageLedger
+# Any Control Center fallback launch must start the production watchdog, not
+# the intermediate enhanced entry point.
+enhanced.WATCHDOG = enhanced.SCRIPTS / "CotSWatchdog24x7Final.py"
 
 
 class QuotaGraph(tk.Canvas):
