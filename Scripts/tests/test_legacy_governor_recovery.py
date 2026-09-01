@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import sys
+import unittest
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -38,31 +39,34 @@ def _state(reason: str, *, blocked: bool = True) -> dict:
     }
 
 
-def test_strategy_block_is_rebaselined_without_erasing_history() -> None:
-    original = _state("two consecutive zero-delta turns; changed strategy or human direction required")
-    state, result = recover_state(copy.deepcopy(original), "TASK-013")
-    assert result["recovered"] is True
-    package = state["tasks"]["TASK-013"]["packages"]["1"]
-    assert package["blocked"] is False
-    assert package["blocked_reason"] is None
-    assert package["zero_delta_streak"] == 0
-    assert package["last_zero_delta_next_action_digest"] is None
-    assert package["zero_delta_turns"] == 4
-    assert state["tasks"]["TASK-013"]["total_turns"] == 4
-    assert state["totals"] == original["totals"]
-    assert package["failure_counts"] == {"abc": 2}
-    assert state["autonomous_recovery_history"][-1]["task"] == "TASK-013"
+class LegacyGovernorRecoveryTests(unittest.TestCase):
+    def test_strategy_block_is_rebaselined_without_erasing_history(self) -> None:
+        original = _state("two consecutive zero-delta turns; changed strategy or human direction required")
+        state, result = recover_state(copy.deepcopy(original), "TASK-013")
+        self.assertTrue(result["recovered"])
+        package = state["tasks"]["TASK-013"]["packages"]["1"]
+        self.assertFalse(package["blocked"])
+        self.assertIsNone(package["blocked_reason"])
+        self.assertEqual(package["zero_delta_streak"], 0)
+        self.assertIsNone(package["last_zero_delta_next_action_digest"])
+        self.assertEqual(package["zero_delta_turns"], 4)
+        self.assertEqual(state["tasks"]["TASK-013"]["total_turns"], 4)
+        self.assertEqual(state["totals"], original["totals"])
+        self.assertEqual(package["failure_counts"], {"abc": 2})
+        self.assertEqual(state["autonomous_recovery_history"][-1]["task"], "TASK-013")
+
+    def test_hard_budget_block_is_not_overridden(self) -> None:
+        original = _state("package budget reached (8/8) with high-value ratio 0%")
+        state, result = recover_state(copy.deepcopy(original), "TASK-013")
+        self.assertFalse(result["recovered"])
+        self.assertTrue(state["tasks"]["TASK-013"]["packages"]["1"]["blocked"])
+
+    def test_unblocked_package_is_noop(self) -> None:
+        original = _state("", blocked=False)
+        state, result = recover_state(copy.deepcopy(original), "TASK-013")
+        self.assertFalse(result["recovered"])
+        self.assertEqual(state["tasks"]["TASK-013"]["packages"]["1"]["zero_delta_streak"], 2)
 
 
-def test_hard_budget_block_is_not_overridden() -> None:
-    original = _state("package budget reached (8/8) with high-value ratio 0%")
-    state, result = recover_state(copy.deepcopy(original), "TASK-013")
-    assert result["recovered"] is False
-    assert state["tasks"]["TASK-013"]["packages"]["1"]["blocked"] is True
-
-
-def test_unblocked_package_is_noop() -> None:
-    original = _state("", blocked=False)
-    state, result = recover_state(copy.deepcopy(original), "TASK-013")
-    assert result["recovered"] is False
-    assert state["tasks"]["TASK-013"]["packages"]["1"]["zero_delta_streak"] == 2
+if __name__ == "__main__":
+    unittest.main()
