@@ -41,6 +41,7 @@ jobs:
           Scripts/CotSNotifications.py
           Scripts/CotSOperationalMetrics.py
           Scripts/CotSChaosRunner.py
+          Scripts/CotSLiveChaosMaintenance.py
       - name: Run 24x7 regression tests
         shell: pwsh
         run: python -m unittest Scripts.tests.test_cots_24x7 Scripts.tests.test_cots_24x7_enhanced -v
