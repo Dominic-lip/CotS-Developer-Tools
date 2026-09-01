@@ -11,6 +11,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+try:
+    from CotSProcess import pid_running
+except ModuleNotFoundError:
+    from Scripts.CotSProcess import pid_running
+
 REPO = Path(__file__).resolve().parent.parent
 COTS = REPO / ".cots"
 INCIDENTS = COTS / "incidents"
@@ -59,19 +64,14 @@ def clear_provider_activity(checkpoint: dict[str, Any], *, state: str = "STOPPED
 
 
 def _pid_live(pid: object) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    """Compatibility wrapper around the shared Windows-safe liveness probe."""
+    return pid_running(pid)
 
 
 def reclaim_orphaned_provider(checkpoint: dict[str, Any], *, runner=subprocess.run) -> bool:
     """Terminate only a recorded CotS provider child after its owner died.
 
-    This intentionally has no process-name scan.  It accepts the exact pid
+    This intentionally has no process-name scan. It accepts the exact pid
     written by the supervisor, a whitelisted adapter kind, and requires the
     recorded supervisor pid to be gone before touching anything.
     """
@@ -146,7 +146,7 @@ def write_incident(category: IncidentCategory | str, message: str, *, affected_c
                    error_code: str = "RECOVERABLE", recommended_scope: str = "factory_infrastructure",
                    checkpoint: dict[str, Any] | None = None, factory_state: dict[str, Any] | None = None,
                    previous_repair_attempts: int = 0) -> Path:
-    """Persist only bounded control evidence.  This file is FixIt's whole input."""
+    """Persist only bounded control evidence. This file is FixIt's whole input."""
     checkpoint = checkpoint if checkpoint is not None else read_json(SUPERVISOR_STATE)
     factory_state = factory_state if factory_state is not None else read_json(FACTORY_STATE)
     category_value = category.value if isinstance(category, IncidentCategory) else str(category)
