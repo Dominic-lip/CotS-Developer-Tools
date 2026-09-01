@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Non-destructive rollback guard for CotS autonomous runtime tooling.
 
-Before each factory generation, the watchdog snapshots only the small set of
-24x7 runtime files. If those files change and fail a local canary after the
+Before each factory generation, the watchdog snapshots only the CotS control
+plane/runtime files. If those files change and fail a local canary after the
 generation exits, the exact pre-generation copies are restored. No git reset,
 clean, force checkout or history rewrite is used.
 """
@@ -23,6 +23,15 @@ REPO = Path(__file__).resolve().parent.parent
 STATE = COTS / "rollback-guard.local.json"
 SNAPSHOT_ROOT = COTS / "rollback-snapshots"
 MANAGED_FILES = (
+    # Existing autonomous control plane
+    "Scripts/CotSAgentSupervisor.py",
+    "Scripts/CotSFactoryController.py",
+    "Scripts/CotSFactoryBootstrap.py",
+    "Scripts/CotSAgentFixIt.py",
+    "Scripts/CotSRecovery.py",
+    "Scripts/CotSFactoryDashboard.py",
+    "Scripts/CotSHostMcp.py",
+    # 24x7 wrappers/observability
     "Scripts/CotS24x7Common.py",
     "Scripts/CotSAgentSupervisor24x7.py",
     "Scripts/CotSFactoryController24x7.py",
