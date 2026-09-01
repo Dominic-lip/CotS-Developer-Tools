@@ -48,6 +48,7 @@ MANAGED_FILES = (
     "Scripts/CotSNotifications.py",
     "Scripts/CotSOperationalMetrics.py",
     "Scripts/CotSChaosRunner.py",
+    "Scripts/CotSLiveChaosMaintenance.py",
     "Scripts/CotSSupportBundle.py",
 )
 
