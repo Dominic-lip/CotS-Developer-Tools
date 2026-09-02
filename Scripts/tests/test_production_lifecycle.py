@@ -88,6 +88,19 @@ class ProductionLifecycleTests(unittest.TestCase):
         with self.assertRaises(lifecycle.Refused):
             lifecycle.apply_manifest("bad-path.json")
 
+    def test_manifest_normalize_eof_preserves_content(self):
+        lifecycle.PRODUCTION.mkdir(parents=True)
+        target = lifecycle.PRODUCTION / "Config" / "DefaultInput.ini"
+        target.parent.mkdir()
+        target.write_text("[Input]\nValue=True\n\n", encoding="utf-8")
+        self._write_manifest("normalize.json", {
+            "task": "TASK-015",
+            "files": [{"path": "Config/DefaultInput.ini", "mode": "normalize_eof"}],
+        })
+        result = lifecycle.apply_manifest("normalize.json")
+        self.assertEqual(result["changed"], ["Config/DefaultInput.ini"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "[Input]\nValue=True\n")
+
     def test_manifest_filename_itself_is_bounded(self):
         with self.assertRaises(lifecycle.Refused):
             lifecycle._manifest_path("../outside.json")

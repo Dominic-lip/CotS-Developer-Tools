@@ -273,7 +273,7 @@ def apply_manifest(name: str) -> dict[str, Any]:
         raise Refused("manifest task is not authorized for production mutation")
     if not isinstance(files, list) or not files or len(files) > MAX_MANIFEST_FILES:
         raise Refused("manifest must contain 1..100 text files")
-    planned: list[tuple[Path, str, str]] = []
+    planned: list[tuple[Path, str | None, str, str]] = []
     total = 0
     for entry in files:
         if not isinstance(entry, dict):
@@ -281,23 +281,32 @@ def apply_manifest(name: str) -> dict[str, Any]:
         relative = str(entry.get("path") or "")
         content = entry.get("content")
         mode = str(entry.get("mode") or "upsert")
-        if mode not in {"create", "upsert"} or not isinstance(content, str):
-            raise Refused("manifest supports text create/upsert only")
+        if mode not in {"create", "upsert", "normalize_eof"}:
+            raise Refused("manifest supports create, upsert, or normalize_eof only")
+        target = _safe_relpath(relative)
+        if mode == "normalize_eof":
+            if content is not None or not target.exists():
+                raise Refused("normalize_eof requires an existing file and no content")
+            planned.append((target, None, relative, mode))
+            continue
+        if not isinstance(content, str):
+            raise Refused("create/upsert manifest entries require text content")
         encoded = content.encode("utf-8")
         if len(encoded) > MAX_TEXT_BYTES:
             raise Refused(f"manifest file too large: {relative}")
         total += len(encoded)
         if total > MAX_TEXT_BYTES * 4:
             raise Refused("manifest total text payload is too large")
-        target = _safe_relpath(relative)
         if mode == "create" and target.exists():
             raise Refused(f"create target already exists: {relative}")
-        planned.append((target, content, relative))
+        planned.append((target, content, relative, mode))
     changed: list[str] = []
     unchanged: list[str] = []
-    for target, content, relative in planned:
+    for target, content, relative, mode in planned:
         target.parent.mkdir(parents=True, exist_ok=True)
         current = target.read_text(encoding="utf-8") if target.exists() else None
+        if mode == "normalize_eof":
+            content = (current or "").rstrip("\r\n") + "\n"
         if current == content:
             unchanged.append(relative)
             continue
@@ -317,12 +326,14 @@ def status() -> dict[str, Any]:
         _atomic_json(STATE_FILE, state)
     git = _git("status", "--porcelain=v1") if (PRODUCTION / ".git").exists() else None
     head = _git("rev-parse", "HEAD") if (PRODUCTION / ".git").exists() else None
+    git_lines = [line for line in (git or {}).get("output_tail", "").splitlines() if line.strip()]
     return {
         "production_root": str(PRODUCTION),
         "project": str(PROJECT),
         "project_exists": PROJECT.is_file(),
         "git_initialized": (PRODUCTION / ".git").exists(),
-        "git_clean": bool(git is not None and git.get("exit_code") == 0 and not git.get("output_tail", "").strip()),
+        "git_clean": bool(git is not None and git.get("exit_code") == 0 and not git_lines),
+        "git_dirty_paths": [line[3:] if len(line) > 3 else line for line in git_lines],
         "git_head": (head or {}).get("output_tail", "").strip() if head else None,
         "engine_available": EDITOR.is_file() and EDITOR_CMD.is_file() and BUILD_BAT.is_file(),
         "editor_running": editor_running,
