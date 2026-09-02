@@ -3,7 +3,9 @@
 
 The governor never calls an AI provider. It watches durable supervisor/repo
 signals and trips after several expensive provider turns fail to produce
-engineering evidence (file changes, commits, tests, or acceptance proof).
+engineering evidence (file changes, commits, tests, acceptance proof or real
+task advancement). A provider turn or outcome marker by itself is activity,
+not productivity.
 """
 from __future__ import annotations
 
@@ -43,6 +45,11 @@ def evidence_signature(supervisor: dict[str, Any] | None = None) -> dict[str, An
 
 
 def evidence_progressed(before: dict[str, Any], after: dict[str, Any]) -> tuple[bool, list[str]]:
+    """Return only durable engineering progress.
+
+    Deliberately excluded: provider turn count and ``last_successful_gate``.
+    Those prove that an agent returned, not that engineering state improved.
+    """
     reasons: list[str] = []
     if before.get("head") != after.get("head"):
         reasons.append("commit")
@@ -54,8 +61,10 @@ def evidence_progressed(before: dict[str, Any], after: dict[str, Any]) -> tuple[
         reasons.append("full_suite")
     if safe_nonnegative_int(after.get("validation_count")) > safe_nonnegative_int(before.get("validation_count")):
         reasons.append("acceptance_proof")
-    if after.get("last_successful_gate") and after.get("last_successful_gate") != before.get("last_successful_gate"):
-        reasons.append("successful_gate")
+    before_remaining = safe_nonnegative_int(before.get("acceptance_remaining"), 0)
+    after_remaining = safe_nonnegative_int(after.get("acceptance_remaining"), 0)
+    if before_remaining and after_remaining < before_remaining:
+        reasons.append("acceptance_proof")
     if after.get("task") != before.get("task"):
         reasons.append("task_advanced")
     return bool(reasons), reasons
@@ -97,8 +106,6 @@ class ProductivityGovernor:
         turn_count = safe_nonnegative_int(supervisor.get("turn_count"), 0)
         previous_turn = safe_nonnegative_int(self.data.get("last_turn_count"), turn_count)
 
-        # Supervisor generations may legitimately start a new local turn
-        # counter. Re-baseline instead of permanently ignoring all future turns.
         if turn_count < previous_turn:
             self.data["last_turn_count"] = turn_count
             self.data["last_evidence"] = evidence_signature(supervisor)
@@ -118,7 +125,7 @@ class ProductivityGovernor:
             self.data["unproductive_turns"] = 0
             if "commit" in reasons: self.data["commits"] = safe_nonnegative_int(self.data.get("commits")) + 1
             if "targeted_test" in reasons or "full_suite" in reasons: self.data["tests"] = safe_nonnegative_int(self.data.get("tests")) + 1
-            if "acceptance_proof" in reasons or "successful_gate" in reasons: self.data["acceptance_proofs"] = safe_nonnegative_int(self.data.get("acceptance_proofs")) + 1
+            if "acceptance_proof" in reasons: self.data["acceptance_proofs"] = safe_nonnegative_int(self.data.get("acceptance_proofs")) + 1
             self.data["last_productive_at"] = time.time()
             self.data["last_productive_reasons"] = reasons
         else:
