@@ -33,6 +33,7 @@ EDITOR = ENGINE / "Engine" / "Binaries" / "Win64" / "UnrealEditor.exe"
 EDITOR_CMD = ENGINE / "Engine" / "Binaries" / "Win64" / "UnrealEditor-Cmd.exe"
 BUILD_BAT = ENGINE / "Engine" / "Build" / "BatchFiles" / "Build.bat"
 MCP_HOST, MCP_PORT = "127.0.0.1", 8000
+NETWORKED_AUTOMATION_TEST = "CotS.Runtime.NetworkProbe.TwoParticipantLifecycle"
 MAX_MANIFEST_FILES = 100
 MAX_TEXT_BYTES = 2 * 1024 * 1024
 ALLOWED_TASKS = {"TASK-015", *(f"TASK-{n}" for n in range(100, 116))}
@@ -835,6 +836,71 @@ def smoke(timeout_seconds: int = 300) -> dict[str, Any]:
     return {"success": result["exit_code"] == 0, **result}
 
 
+def networked_automation(timeout_seconds: int = 300) -> dict[str, Any]:
+    """Run TASK-101's exact two-worker UE network-automation test.
+
+    The worker and controller command lines are deliberately fixed. This is
+    not a general process launcher: it accepts no project, executable, test,
+    address, or command-line input from the caller.
+    """
+    if status().get("editor_running"):
+        raise Refused("close the production editor before running networked automation")
+    if not PROJECT.is_file() or not EDITOR.is_file() or not EDITOR_CMD.is_file():
+        raise Refused("production project or UE 5.8 editor executable is missing")
+
+    mcp_override = "-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False"
+    worker_command = [
+        str(EDITOR), str(PROJECT), "-game", "-messaging", mcp_override,
+        "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound",
+    ]
+    workers = [
+        subprocess.Popen(worker_command, cwd=PRODUCTION, creationflags=NEW_PROCESS_GROUP),
+        subprocess.Popen(worker_command, cwd=PRODUCTION, creationflags=NEW_PROCESS_GROUP),
+    ]
+    _write_state(
+        last_operation="networked-automation-starting",
+        networked_automation_worker_pids=[worker.pid for worker in workers],
+    )
+    try:
+        time.sleep(5)
+        controller_command = [
+            str(EDITOR_CMD), str(PROJECT), "-messaging", mcp_override,
+            f"-ExecCmds=Automation RunTests {NETWORKED_AUTOMATION_TEST};Quit",
+            "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound",
+        ]
+        result = _run(
+            controller_command,
+            cwd=PRODUCTION,
+            timeout=max(60, min(1200, int(timeout_seconds))),
+            creationflags=NEW_PROCESS_GROUP,
+        )
+    finally:
+        for worker in workers:
+            if worker.poll() is None:
+                worker.terminate()
+        for worker in workers:
+            try:
+                worker.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
+
+    workers_cleaned = all(worker.poll() is not None for worker in workers)
+    successful = workers_cleaned and result["exit_code"] == 0 and "Automation Test Failed" not in result["output_tail"]
+    _write_state(
+        last_operation="networked-automation",
+        networked_automation_exit_code=result["exit_code"],
+        networked_automation_test=NETWORKED_AUTOMATION_TEST,
+        networked_automation_worker_pids=[] if workers_cleaned else [worker.pid for worker in workers if worker.poll() is None],
+    )
+    return {
+        "success": successful,
+        "test": NETWORKED_AUTOMATION_TEST,
+        "worker_count": 2,
+        "workers_cleaned": workers_cleaned,
+        **result,
+    }
+
+
 def create_entry_map(timeout_seconds: int = 300) -> dict[str, Any]:
     """Create only TASK-015's canonical entry map through UE's Python commandlet."""
     info = status()
@@ -918,6 +984,7 @@ def main() -> int:
     manifest = sub.add_parser("apply-manifest"); manifest.add_argument("manifest")
     build_parser = sub.add_parser("build"); build_parser.add_argument("--target", choices=("editor", "game", "server"), default="editor"); build_parser.add_argument("--timeout", type=int, default=1800)
     smoke_parser = sub.add_parser("smoke"); smoke_parser.add_argument("--timeout", type=int, default=300)
+    network_parser = sub.add_parser("networked-automation"); network_parser.add_argument("--timeout", type=int, default=300)
     map_parser = sub.add_parser("create-entry-map"); map_parser.add_argument("--timeout", type=int, default=300)
     sub.add_parser("open")
     close_parser = sub.add_parser("close"); close_parser.add_argument("--timeout", type=int, default=45)
@@ -940,6 +1007,7 @@ def main() -> int:
         elif args.operation == "apply-manifest": value = apply_manifest(args.manifest)
         elif args.operation == "build": value = build(args.target, args.timeout)
         elif args.operation == "smoke": value = smoke(args.timeout)
+        elif args.operation == "networked-automation": value = networked_automation(args.timeout)
         elif args.operation == "create-entry-map": value = create_entry_map(args.timeout)
         elif args.operation == "open": value = open_editor()
         elif args.operation == "close": value = close_editor(args.timeout)

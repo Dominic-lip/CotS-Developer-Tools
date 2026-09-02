@@ -75,3 +75,12 @@ two workers, so this test is not discoverable or runnable through that
 single-editor controller. A fixed, auditable multi-worker automation operation
 is still required to execute and record the connect/replicate/disconnect/
 reconnect proof.
+
+The fixed `networked-automation` lifecycle operation now starts exactly two
+game workers and one UE command-line automation controller with the audited
+test name above; it accepts no executable, project, test, address, or command
+arguments. Its first run returned exit code 255 before worker discovery because
+the installed engine's all-platform SDK validation requires `MainVersion`
+metadata for LinuxArm64 and VisionOS. The operation records owned worker state
+and reports failure unless both workers have exited. This is an installed-engine
+validation topology gate, not evidence that the network lifecycle test ran.

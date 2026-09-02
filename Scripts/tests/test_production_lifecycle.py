@@ -54,6 +54,16 @@ class ProductionLifecycleTests(unittest.TestCase):
             for value in lifecycle.smoke.__code__.co_consts
         ))
 
+    def test_task101_networked_automation_is_a_fixed_two_worker_operation(self):
+        self.assertEqual(
+            lifecycle.NETWORKED_AUTOMATION_TEST,
+            "CotS.Runtime.NetworkProbe.TwoParticipantLifecycle",
+        )
+        constants = lifecycle.networked_automation.__code__.co_consts
+        self.assertTrue(any(isinstance(value, str) and "-game" in value for value in constants))
+        self.assertTrue(any(isinstance(value, str) and "Automation RunTests" in value for value in constants))
+        self.assertTrue(any(isinstance(value, str) and "networked-automation-starting" in value for value in constants))
+
     def test_bootstrap_creates_fixed_minimal_project_without_git_side_effect(self):
         result = lifecycle.bootstrap(initialize_git=False)
         self.assertTrue(result["success"])
