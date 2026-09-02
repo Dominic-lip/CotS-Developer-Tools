@@ -36,7 +36,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="operation", required=True)
     for name in ("status", "diff", "diff-check"):
         sub.add_parser(name)
-    complete = sub.add_parser("complete", help="Validate, stage exact files, commit, and push origin/main.")
+    complete = sub.add_parser("complete", help="Validate, stage exact files, commit current HEAD, and push it to origin/main.")
     complete.add_argument("--message", required=True)
     complete.add_argument("files", nargs="+", type=repo_file)
     args = parser.parse_args()
@@ -68,7 +68,12 @@ def main() -> int:
     result = git("commit", "-m", args.message, capture=True)
     if result.returncode:
         return print_result(result)
-    return print_result(git("push", "origin", "main", capture=True))
+    # Push the commit we just created, not a possibly different local branch
+    # named "main". This matters in Git worktrees and clean commissioning
+    # branches where the autonomous runtime intentionally does not execute on
+    # the primary worktree's main branch. A concurrent origin/main advance
+    # still causes a normal non-fast-forward rejection; no force push is used.
+    return print_result(git("push", "origin", "HEAD:main", capture=True))
 
 
 if __name__ == "__main__":
