@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Persistent zero-provider-cost circuit breaker for repeated CotS gates.
 
-A restart is only useful when some relevant input/evidence changed.  This guard
+A restart is only useful when some relevant input/evidence changed. This guard
 fingerprints structured supervisor gates across Factory generations and blocks
 provider re-entry after the same gate is observed twice with identical durable
-engineering evidence.
+engineering evidence in either DeveloperTools or the production CotS tree.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from typing import Any
 from CotS24x7Common import COTS, SUPERVISOR_STATE, atomic_json, clean_text, fixed_git, read_json, safe_nonnegative_int
 
 STATE = COTS / "loop-guard.local.json"
+PRODUCTION = Path(r"C:\Dev\CotS")
 DEFAULT_THRESHOLD = 2
 GATE_STATES = frozenset({
     "RECOVERABLE_GATE", "HUMAN_GATE", "HUMAN_REQUIRED", "FAILED",
@@ -30,6 +32,16 @@ def _list_len(value: object) -> int:
 
 def _normal_reason(value: object) -> str:
     return " ".join(clean_text(value, 900).lower().split())
+
+
+def _production_git(*args: str) -> str:
+    if not (PRODUCTION / ".git").exists():
+        return ""
+    try:
+        result = subprocess.run(["git", *args], cwd=PRODUCTION, text=True, capture_output=True, timeout=15, check=False)
+        return (result.stdout + result.stderr).strip()[-12000:]
+    except Exception:
+        return ""
 
 
 def gate_descriptor(supervisor: dict[str, Any] | None = None) -> dict[str, str] | None:
@@ -72,9 +84,14 @@ def durable_evidence(supervisor: dict[str, Any] | None = None) -> dict[str, Any]
     context = supervisor.get("compact_task_context") if isinstance(supervisor.get("compact_task_context"), dict) else {}
     efficiency = supervisor.get("efficiency") if isinstance(supervisor.get("efficiency"), dict) else {}
     status = fixed_git("status", "--porcelain=v1")
+    production_status = _production_git("status", "--porcelain=v1")
+    production_exists = (PRODUCTION / "CotS.uproject").is_file()
     return {
         "head": fixed_git("rev-parse", "HEAD").strip(),
         "working_tree": hashlib.sha256(status.encode("utf-8", errors="replace")).hexdigest()[:20],
+        "production_exists": production_exists,
+        "production_head": _production_git("rev-parse", "HEAD") if (PRODUCTION / ".git").exists() else "",
+        "production_working_tree": hashlib.sha256(production_status.encode("utf-8", errors="replace")).hexdigest()[:20] if (PRODUCTION / ".git").exists() else ("present" if production_exists else "absent"),
         "task": str(supervisor.get("task") or ""),
         "phase": str(supervisor.get("phase") or ""),
         "targeted_tests": safe_nonnegative_int(context.get("targeted_tests_run", efficiency.get("targeted_test_runs", 0))),
@@ -95,6 +112,12 @@ def durable_progress(before: dict[str, Any], after: dict[str, Any]) -> tuple[boo
         reasons.append("commit")
     if before.get("working_tree") != after.get("working_tree"):
         reasons.append("file_change")
+    if not before.get("production_exists") and after.get("production_exists"):
+        reasons.append("production_bootstrap")
+    if before.get("production_head") != after.get("production_head") and after.get("production_head"):
+        reasons.append("production_commit")
+    if before.get("production_working_tree") != after.get("production_working_tree"):
+        reasons.append("production_file_change")
     if safe_nonnegative_int(after.get("targeted_tests")) > safe_nonnegative_int(before.get("targeted_tests")):
         reasons.append("targeted_test")
     if safe_nonnegative_int(after.get("full_suites")) > safe_nonnegative_int(before.get("full_suites")):
