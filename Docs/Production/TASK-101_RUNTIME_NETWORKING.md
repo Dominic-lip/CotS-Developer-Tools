@@ -62,3 +62,16 @@ fixed `build --target server` rerun after `89cacc6` returned exit code 6 before
 project compilation: `Server targets are not currently supported from this
 engine distribution.` No retry is appropriate without a server-capable UE
 installation.
+
+Production commit `1495abb` adds the UE 5.8
+`IMPLEMENT_NETWORKED_AUTOMATION_TEST` seam
+`CotS.Runtime.NetworkProbe.TwoParticipantLifecycle`. It declares host and
+client participants, opens the authoritative entry map on the host, and waits
+for the client participant through the engine's network-automation command
+primitives. The canonical editor build compiled this source successfully.
+The production native-MCP editor controller discovers only editor-context
+tests; UE's networked macro deliberately removes `EditorContext` and requires
+two workers, so this test is not discoverable or runnable through that
+single-editor controller. A fixed, auditable multi-worker automation operation
+is still required to execute and record the connect/replicate/disconnect/
+reconnect proof.
