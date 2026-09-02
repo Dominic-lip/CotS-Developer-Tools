@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import time
@@ -27,6 +28,8 @@ enhanced.pid_live = process_live
 # the intermediate enhanced entry point.
 enhanced.WATCHDOG = enhanced.SCRIPTS / "CotSWatchdog24x7Final.py"
 
+TAILSCALE_TARGET = "http://127.0.0.1:8765"
+
 
 def telemetry_reachable(timeout: float = 0.35) -> bool:
     """Return True only when the watchdog's localhost HTTP listener is live."""
@@ -45,6 +48,69 @@ def health_is_live(health: dict[str, Any], freshness_seconds: float = 15.0) -> b
     if not isinstance(updated_at, (int, float)) or time.time() - float(updated_at) > freshness_seconds:
         return False
     return bool(health.get("alive", True))
+
+
+def tailscale_executable() -> str | None:
+    """Find the Tailscale CLI even when its install directory is not on PATH."""
+    for command in ("tailscale", "tailscale.exe"):
+        found = shutil.which(command)
+        if found:
+            return found
+    candidates = []
+    program_files = os.environ.get("ProgramFiles")
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if program_files:
+        candidates.append(os.path.join(program_files, "Tailscale", "tailscale.exe"))
+    if local_app_data:
+        candidates.append(os.path.join(local_app_data, "Tailscale", "tailscale.exe"))
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            install_dir = os.path.dirname(candidate)
+            os.environ["PATH"] = install_dir + os.pathsep + os.environ.get("PATH", "")
+            return candidate
+    return None
+
+
+def ensure_tailscale_serve(timeout: float = 10.0) -> dict[str, Any]:
+    """Best-effort private exposure of local telemetry through Tailscale Serve.
+
+    This never starts autonomy and never changes firewall/public-listener state.
+    Failure is returned as diagnostics instead of preventing the Control Center
+    from opening.
+    """
+    executable = tailscale_executable()
+    if not executable:
+        return {"success": False, "state": "not_installed", "target": TAILSCALE_TARGET}
+    try:
+        status = subprocess.run(
+            [executable, "status"],
+            text=True,
+            capture_output=True,
+            timeout=max(2.0, timeout / 2),
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        if status.returncode != 0:
+            message = (status.stderr or status.stdout or "Tailscale is not ready").strip()
+            return {"success": False, "state": "not_ready", "error": message[-800:], "target": TAILSCALE_TARGET}
+        served = subprocess.run(
+            [executable, "serve", "--bg", TAILSCALE_TARGET],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        message = (served.stdout or served.stderr or "").strip()
+        return {
+            "success": served.returncode == 0,
+            "state": "enabled" if served.returncode == 0 else "serve_failed",
+            "exit_code": served.returncode,
+            "message": message[-1200:],
+            "target": TAILSCALE_TARGET,
+        }
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"success": False, "state": "error", "error": str(error), "target": TAILSCALE_TARGET}
 
 
 class QuotaGraph(tk.Canvas):
@@ -176,6 +242,28 @@ enhanced.ControlCenter._refresh_usage = refresh_usage
 
 class ProductionControlCenter(enhanced.ControlCenter):
     """Production GUI with live endpoint validation and safe telemetry recovery."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Remote access is best-effort and intentionally asynchronous: opening
+        # the GUI must never block or fail merely because Tailscale is absent,
+        # signed out, or temporarily unavailable.
+        self.after(300, self._auto_enable_tailscale)
+
+    def _auto_enable_tailscale(self) -> None:
+        def finished(result: Any) -> None:
+            if not isinstance(result, dict):
+                return
+            if result.get("success"):
+                if hasattr(self, "remote_status"):
+                    self.remote_status.set("Tailscale Serve: enabled for CotS telemetry")
+            elif result.get("state") == "not_installed":
+                if hasattr(self, "remote_status"):
+                    self.remote_status.set("Tailscale CLI not found — remote access not enabled")
+            elif hasattr(self, "remote_status"):
+                detail = str(result.get("error") or result.get("message") or result.get("state") or "unavailable")
+                self.remote_status.set(f"Tailscale auto-enable failed: {detail[:160]}")
+        self._background(ensure_tailscale_serve, finished)
 
     def _build(self) -> None:
         super()._build()
