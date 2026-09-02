@@ -14,6 +14,11 @@ second installed/usable provider can be selected locally as the changed
 strategy. The chosen route is persisted in a small local routing override so a
 supervisor restart cannot lose it.
 
+A structured HANDOFF may outlive the package block itself: the watchdog can
+clear the package and be interrupted before it persists/replays the route. If
+that exact state is observed while the supervisor is parked, this module
+persists the explicit handoff without changing package counters or retry state.
+
 Hard package-budget exhaustion, infrastructure/protocol failures, unavailable
 alternate providers, and unknown block reasons are never overridden. No AI
 provider is contacted by this module.
@@ -60,6 +65,12 @@ UNUSABLE_PROVIDER_STATUSES = {
     "AUTHENTICATION_REQUIRED",
     "STALLED_PROVIDER",
     "DISABLED",
+}
+
+PARKED_SUPERVISOR_STATES = {
+    "GOVERNOR_PAUSED",
+    "STOPPED",
+    "RECOVERABLE_EXIT",
 }
 
 
@@ -154,18 +165,48 @@ def recover_state(
     Strategy/streak blocks are eligible directly. A repeated-substantive block
     is eligible only when the next turn can be routed to another provider,
     either by explicit HANDOFF or by a locally observed usable alternate.
+
+    If the package was already rebaselined but a parked supervisor still holds
+    an explicit HANDOFF, report a route-only recovery. This closes the narrow
+    crash/interruption window between clearing the package and persisting the
+    alternate-provider route without mutating package history again.
+
     Package budgets and unknown reasons remain blocked.
     """
     package, package_id = _active_package(state, task_id)
     if package is None:
         return state, {"recovered": False, "reason": "task/package not found", "task": task_id}
 
+    supervisor = supervisor if isinstance(supervisor, dict) else {}
     blocked = bool(package.get("blocked"))
     reason = str(package.get("blocked_reason") or "").strip()
     lower = reason.lower()
     explicit_target = structured_handoff_target(supervisor)
     fallback_target = alternate_provider_target(supervisor) if explicit_target is None else None
     route_target = explicit_target or fallback_target
+    supervisor_state = str(supervisor.get("state") or "").strip().upper()
+
+    # A previous recovery may already have cleared the package but failed or
+    # been interrupted before the route was persisted. Preserve only an
+    # *explicit* structured handoff in this state; never invent an alternate
+    # provider merely because an unblocked package happens to be parked.
+    if (
+        not blocked
+        and explicit_target is not None
+        and supervisor_state in PARKED_SUPERVISOR_STATES
+    ):
+        return state, {
+            "recovered": True,
+            "route_only": True,
+            "task": task_id,
+            "package": package_id,
+            "mode": "route_only_handoff",
+            "handoff_target": explicit_target,
+            "previous_reason": "package already unblocked; persisted explicit structured handoff",
+            "previous_zero_delta_streak": int(package.get("zero_delta_streak") or 0),
+            "previous_low_delta_streak": int(package.get("low_delta_streak") or 0),
+        }
+
     strategy_recoverable = blocked and any(token in lower for token in RECOVERABLE_REASON_TOKENS)
     handoff_recoverable = (
         blocked
@@ -227,6 +268,7 @@ def recover_state(
 
     return state, {
         "recovered": True,
+        "route_only": False,
         "task": task_id,
         "package": package_id,
         "mode": mode,
@@ -267,7 +309,11 @@ def recover_persisted(task_id: str, *, source: str = "24x7-watchdog") -> dict[st
             supervisor = _read_json(SUPERVISOR_STATE)
             state, result = recover_state(state, task_id, source=source, supervisor=supervisor)
             if result.get("recovered"):
-                _atomic_json(STATE, state)
+                # Route-only recovery intentionally leaves the governor state
+                # byte-for-byte alone except for normal JSON reserialization;
+                # ordinary recovery persists the cleared active block/streak.
+                if not result.get("route_only"):
+                    _atomic_json(STATE, state)
                 target = result.get("handoff_target")
                 if target in {"codex", "claude"}:
                     _atomic_json(ROUTING_OVERRIDE, {
