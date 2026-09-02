@@ -3,9 +3,8 @@
 
 The governor never calls an AI provider. It watches durable supervisor/repo
 signals and trips after several expensive provider turns fail to produce
-engineering evidence (file changes, commits, tests, acceptance proof or real
-task advancement). A provider turn or outcome marker by itself is activity,
-not productivity.
+engineering evidence in DeveloperTools or the production CotS project. A
+provider turn or outcome marker by itself is activity, not productivity.
 """
 from __future__ import annotations
 
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from CotS24x7Common import COTS, SUPERVISOR_STATE, atomic_json, fixed_git, read_json, safe_nonnegative_int
+from CotSLoopGuard import durable_evidence as cross_repo_evidence
 
 STATE = COTS / "productivity-governor.local.json"
 DEFAULT_THRESHOLD = 4
@@ -31,9 +31,13 @@ def evidence_signature(supervisor: dict[str, Any] | None = None) -> dict[str, An
     context = supervisor.get("compact_task_context") if isinstance(supervisor.get("compact_task_context"), dict) else {}
     efficiency = supervisor.get("efficiency") if isinstance(supervisor.get("efficiency"), dict) else {}
     status = fixed_git("status", "--porcelain=v1")
+    cross = cross_repo_evidence(supervisor)
     return {
         "head": fixed_git("rev-parse", "HEAD").strip(),
         "working_tree": hashlib.sha256(status.encode("utf-8", errors="replace")).hexdigest()[:16],
+        "production_exists": cross.get("production_exists"),
+        "production_head": cross.get("production_head"),
+        "production_working_tree": cross.get("production_working_tree"),
         "targeted_tests": safe_nonnegative_int(context.get("targeted_tests_run", efficiency.get("targeted_test_runs", 0))),
         "full_suites": safe_nonnegative_int(context.get("full_suites_run", efficiency.get("full_suite_runs", 0))),
         "validation_count": _list_len(context.get("validation_passed")),
@@ -55,6 +59,12 @@ def evidence_progressed(before: dict[str, Any], after: dict[str, Any]) -> tuple[
         reasons.append("commit")
     if before.get("working_tree") != after.get("working_tree"):
         reasons.append("file_change")
+    if "production_exists" in before and not before.get("production_exists") and after.get("production_exists"):
+        reasons.append("production_bootstrap")
+    if "production_head" in before and before.get("production_head") != after.get("production_head") and after.get("production_head"):
+        reasons.append("production_commit")
+    if "production_working_tree" in before and before.get("production_working_tree") != after.get("production_working_tree"):
+        reasons.append("production_file_change")
     if safe_nonnegative_int(after.get("targeted_tests")) > safe_nonnegative_int(before.get("targeted_tests")):
         reasons.append("targeted_test")
     if safe_nonnegative_int(after.get("full_suites")) > safe_nonnegative_int(before.get("full_suites")):
@@ -75,7 +85,7 @@ class ProductivityGovernor:
         self.threshold = max(2, int(threshold))
         self.cooldown_seconds = max(60, int(cooldown_seconds))
         self.data = read_json(STATE, {})
-        self.data.setdefault("schema_version", 1)
+        self.data.setdefault("schema_version", 2)
         self.data.setdefault("unproductive_turns", 0)
         self.data.setdefault("useful_turns", 0)
         self.data.setdefault("observed_turns", 0)
@@ -123,9 +133,12 @@ class ProductivityGovernor:
         if progressed:
             self.data["useful_turns"] = safe_nonnegative_int(self.data.get("useful_turns")) + 1
             self.data["unproductive_turns"] = 0
-            if "commit" in reasons: self.data["commits"] = safe_nonnegative_int(self.data.get("commits")) + 1
-            if "targeted_test" in reasons or "full_suite" in reasons: self.data["tests"] = safe_nonnegative_int(self.data.get("tests")) + 1
-            if "acceptance_proof" in reasons: self.data["acceptance_proofs"] = safe_nonnegative_int(self.data.get("acceptance_proofs")) + 1
+            if "commit" in reasons or "production_commit" in reasons:
+                self.data["commits"] = safe_nonnegative_int(self.data.get("commits")) + 1
+            if "targeted_test" in reasons or "full_suite" in reasons:
+                self.data["tests"] = safe_nonnegative_int(self.data.get("tests")) + 1
+            if "acceptance_proof" in reasons:
+                self.data["acceptance_proofs"] = safe_nonnegative_int(self.data.get("acceptance_proofs")) + 1
             self.data["last_productive_at"] = time.time()
             self.data["last_productive_reasons"] = reasons
         else:
