@@ -9,7 +9,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from CotSLegacyGovernorRecovery import recover_state
+from CotSLegacyGovernorRecovery import recover_state, structured_handoff_target
 
 
 def _state(reason: str, *, blocked: bool = True) -> dict:
@@ -55,9 +55,33 @@ class LegacyGovernorRecoveryTests(unittest.TestCase):
         self.assertEqual(package["failure_counts"], {"abc": 2})
         self.assertEqual(state["autonomous_recovery_history"][-1]["task"], "TASK-013")
 
+    def test_repeated_substantive_block_recovers_only_with_structured_handoff(self) -> None:
+        original = _state("same substantive blocker observed twice; no third blind retry")
+        supervisor = {"pending_handoff_target": "claude"}
+        state, result = recover_state(copy.deepcopy(original), "TASK-013", supervisor=supervisor)
+        self.assertTrue(result["recovered"])
+        self.assertEqual(result["mode"], "structured_handoff")
+        self.assertEqual(result["handoff_target"], "claude")
+        package = state["tasks"]["TASK-013"]["packages"]["1"]
+        self.assertFalse(package["blocked"])
+        self.assertEqual(package["zero_delta_turns"], 4)
+        self.assertEqual(package["failure_counts"], {"abc": 2})
+
+    def test_repeated_substantive_block_without_handoff_stays_blocked(self) -> None:
+        original = _state("same substantive blocker observed twice; no third blind retry")
+        state, result = recover_state(copy.deepcopy(original), "TASK-013", supervisor={})
+        self.assertFalse(result["recovered"])
+        self.assertTrue(state["tasks"]["TASK-013"]["packages"]["1"]["blocked"])
+
+    def test_legacy_last_output_handoff_is_recognized(self) -> None:
+        supervisor = {
+            "last_output": "SUPERVISOR_OUTCOME: HANDOFF\nSUPERVISOR_TARGET_AGENT: claude\nSUPERVISOR_HANDOFF_REASON: provider-specific proof"
+        }
+        self.assertEqual(structured_handoff_target(supervisor), "claude")
+
     def test_hard_budget_block_is_not_overridden(self) -> None:
         original = _state("package budget reached (8/8) with high-value ratio 0%")
-        state, result = recover_state(copy.deepcopy(original), "TASK-013")
+        state, result = recover_state(copy.deepcopy(original), "TASK-013", supervisor={"pending_handoff_target": "claude"})
         self.assertFalse(result["recovered"])
         self.assertTrue(state["tasks"]["TASK-013"]["packages"]["1"]["blocked"])
 
