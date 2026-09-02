@@ -32,18 +32,24 @@ worktree at `821bfe679468827b57545c5e9cb86c2590ba19ee`.
 - The fixed `open` operation launched the production editor (tracked PID
   `24700`).
 
-## Remaining acceptance gate
+## Native-MCP reconciliation and remaining gate
 
-No production test-map asset was created. After opening the editor, fixed
-lifecycle status continued to report `mcp_ready: false`; this App Server
-adapter exposes no native Unreal MCP operation for the production endpoint. A
-fixed close attempt while the PID was live returned:
+The production descriptor now enables `ModelContextProtocol` and
+`AllToolsets`; its project user settings specify `/mcp` and
+`bAutoStartServer=True`. The fixed `wait-mcp --timeout 90` operation then
+proved a ready endpoint at `http://127.0.0.1:8000/mcp`, and native toolset
+diagnostics confirmed the registered Scene, Asset, EditorApp, Programmatic,
+and Slate Inspector toolsets. Production commit `f90da9c` records those exact
+configuration files; fixed status afterwards reported a clean worktree.
 
-`no top-level production editor window is available for graceful close`
+No direct native tool creates a level asset: Scene tools only load or operate
+on existing levels, and Asset tools only save existing assets. The registered
+Slate Inspector exposed the File menu's `New Level...` command, but invoking
+that UI command through the fixed bridge timed out and blocked subsequent MCP
+requests while the editor remained live. The fixed `close` operation then
+closed the tracked editor cleanly. No `/Game/Maps/CotS_Entry` asset was
+created, and no fixed smoke pass was recorded.
 
-Later fixed status showed that PID exited, but it does not prove a graceful
-MCP close or smoke pass. TASK-015 remains `PARTIAL` until the production
-adapter exposes a ready, closeable native Unreal MCP lifecycle (or a fixed
-audited test-map bootstrap operation), at which point a minimal
-`/Game/Maps/CotS_Entry` asset must be created/saved and the fixed smoke/editor
-launch path recorded.
+TASK-015 therefore remains `PARTIAL`. It needs a fixed, non-blocking
+production `create-entry-map` operation (or a native direct level-creation
+tool), then one create/save, editor/MCP inspection, and fixed smoke proof.

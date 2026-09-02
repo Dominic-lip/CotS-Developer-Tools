@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import http.client
 import json
 import os
 import re
@@ -139,6 +140,10 @@ def _bootstrap_files() -> dict[str, str]:
             "Category": "Games",
             "Description": "Chronicles of the Sigilarium production project",
             "Modules": [{"Name": "CotS", "Type": "Runtime", "LoadingPhase": "Default"}],
+            "Plugins": [
+                {"Name": "ModelContextProtocol", "Enabled": True},
+                {"Name": "AllToolsets", "Enabled": True},
+            ],
         }, indent=2) + "\n",
         ".gitignore": "Binaries/\nDerivedDataCache/\nIntermediate/\nSaved/\n.vs/\n*.sln\n*.VC.db\n",
         "README.md": "# Chronicles of the Sigilarium\n\nProduction Unreal Engine 5.8 project.\n",
@@ -163,6 +168,11 @@ def _bootstrap_files() -> dict[str, str]:
             "ProjectID=EAD69DA34A6B4D57A7E49C6C8B99C015\n"
             "ProjectName=Chronicles of the Sigilarium\n"
             "Description=Chronicles of the Sigilarium\n"
+        ),
+        "Config/DefaultEditorPerProjectUserSettings.ini": (
+            "[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]\n"
+            "ServerUrlPath=/mcp\n"
+            "bAutoStartServer=True\n"
         ),
         "Source/CotS.Target.cs": (
             "using UnrealBuildTool;\n\n"
@@ -343,6 +353,334 @@ def status() -> dict[str, Any]:
     }
 
 
+def mcp_diagnostics() -> dict[str, Any]:
+    descriptor = _read_json(PROJECT, {}) if PROJECT.is_file() else {}
+    plugins = descriptor.get("Plugins") if isinstance(descriptor.get("Plugins"), list) else []
+    enabled_plugins = sorted(
+        str(plugin.get("Name")) for plugin in plugins
+        if isinstance(plugin, dict) and plugin.get("Enabled")
+    )
+    settings = PRODUCTION / "Config" / "DefaultEditorPerProjectUserSettings.ini"
+    settings_text = settings.read_text(encoding="utf-8", errors="replace") if settings.is_file() else ""
+    log_path = PRODUCTION / "Saved" / "Logs" / "CotS.log"
+    relevant_log_lines: list[str] = []
+    if log_path.is_file():
+        try:
+            relevant_log_lines = [
+                line for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                if "mcp" in line.lower() or "modelcontext" in line.lower()
+            ][-80:]
+        except OSError:
+            relevant_log_lines = ["<unable to read production log>"]
+    return {
+        "success": True,
+        "project_exists": PROJECT.is_file(),
+        "mcp_ready": _mcp_ready(),
+        "enabled_plugins": enabled_plugins,
+        "settings_exists": settings.is_file(),
+        "server_url_path": next((line.split("=", 1)[1] for line in settings_text.splitlines() if line.startswith("ServerUrlPath=")), None),
+        "auto_start_server": "bAutoStartServer=True" in settings_text.splitlines(),
+        "log_path": str(log_path),
+        "relevant_log_lines": relevant_log_lines,
+    }
+
+
+def mcp_toolset_diagnostics() -> dict[str, Any]:
+    """Read the fixed native MCP registry; this never dispatches a project mutation."""
+    if not _mcp_ready():
+        return {"success": False, "error": "production_unreal_mcp_not_ready"}
+    connection = http.client.HTTPConnection(MCP_HOST, MCP_PORT, timeout=8)
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    try:
+        initialize = {
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "CotS Production Lifecycle", "version": "1.0"}},
+        }
+        connection.request("POST", "/mcp", body=json.dumps(initialize), headers=headers)
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        session_id = response.getheader("Mcp-Session-Id")
+        if response.status != 200 or not session_id:
+            return {"success": False, "error": "production_unreal_mcp_initialize_failed"}
+        protocol_version = payload.get("result", {}).get("protocolVersion", "2025-11-25")
+        session_headers = {**headers, "Mcp-Session-Id": session_id, "Mcp-Protocol-Version": protocol_version}
+        connection.request("POST", "/mcp", body=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}), headers=session_headers)
+        initialized = connection.getresponse()
+        initialized.read()
+        if initialized.status not in (200, 202):
+            return {"success": False, "error": "production_unreal_mcp_initialized_notification_failed"}
+        request = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "list_toolsets", "arguments": {}}}
+        connection.request("POST", "/mcp", body=json.dumps(request), headers=session_headers)
+        response = connection.getresponse()
+        tool_payload = json.loads(response.read().decode("utf-8"))
+        if response.status != 200 or "error" in tool_payload:
+            return {"success": False, "error": "production_unreal_mcp_list_toolsets_failed", "transport": tool_payload}
+        content = tool_payload.get("result", {}).get("content", [])
+        text = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+        return {"success": True, "toolsets": text[:20000]}
+    finally:
+        connection.close()
+
+
+def mcp_meta_tools() -> dict[str, Any]:
+    """Return only the fixed endpoint's MCP tool schemas for native-tool discovery."""
+    if not _mcp_ready():
+        return {"success": False, "error": "production_unreal_mcp_not_ready"}
+    connection = http.client.HTTPConnection(MCP_HOST, MCP_PORT, timeout=8)
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    try:
+        initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "CotS Production Lifecycle", "version": "1.0"}}}
+        connection.request("POST", "/mcp", body=json.dumps(initialize), headers=headers)
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        session_id = response.getheader("Mcp-Session-Id")
+        if response.status != 200 or not session_id:
+            return {"success": False, "error": "production_unreal_mcp_initialize_failed"}
+        protocol_version = payload.get("result", {}).get("protocolVersion", "2025-11-25")
+        session_headers = {**headers, "Mcp-Session-Id": session_id, "Mcp-Protocol-Version": protocol_version}
+        connection.request("POST", "/mcp", body=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}), headers=session_headers)
+        initialized = connection.getresponse()
+        initialized.read()
+        if initialized.status not in (200, 202):
+            return {"success": False, "error": "production_unreal_mcp_initialized_notification_failed"}
+        connection.request("POST", "/mcp", body=json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}), headers=session_headers)
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        if response.status != 200 or "error" in payload:
+            return {"success": False, "error": "production_unreal_mcp_tools_list_failed", "transport": payload}
+        return {"success": True, "tools": payload.get("result", {}).get("tools", [])}
+    finally:
+        connection.close()
+
+
+def mcp_map_tool_diagnostics() -> dict[str, Any]:
+    """Describe only the native SceneTools and AssetTools needed for TASK-015 map evidence."""
+    if not _mcp_ready():
+        return {"success": False, "error": "production_unreal_mcp_not_ready"}
+    connection = http.client.HTTPConnection(MCP_HOST, MCP_PORT, timeout=8)
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    try:
+        initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "CotS Production Lifecycle", "version": "1.0"}}}
+        connection.request("POST", "/mcp", body=json.dumps(initialize), headers=headers)
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        session_id = response.getheader("Mcp-Session-Id")
+        if response.status != 200 or not session_id:
+            return {"success": False, "error": "production_unreal_mcp_initialize_failed"}
+        protocol_version = payload.get("result", {}).get("protocolVersion", "2025-11-25")
+        session_headers = {**headers, "Mcp-Session-Id": session_id, "Mcp-Protocol-Version": protocol_version}
+        connection.request("POST", "/mcp", body=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}), headers=session_headers)
+        initialized = connection.getresponse()
+        initialized.read()
+        if initialized.status not in (200, 202):
+            return {"success": False, "error": "production_unreal_mcp_initialized_notification_failed"}
+        toolsets: dict[str, list[dict[str, Any]]] = {}
+        requested_toolsets = (
+            ("EditorToolset.EditorAppToolset", ("level", "save", "new", "map", "console")),
+            ("editor_toolset.toolsets.scene.SceneTools", ("level", "save")),
+            ("editor_toolset.toolsets.asset.AssetTools", ("save", "create_folder", "exists")),
+            ("editor_toolset.toolsets.programmatic.ProgrammaticToolset", ("execute", "environment")),
+            ("SlateInspectorToolset.SlateInspectorToolset", ("observe", "snapshot", "click", "type", "key", "text")),
+        )
+        for request_id, (toolset_name, keywords) in enumerate(requested_toolsets, start=2):
+            request = {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": {"name": "describe_toolset", "arguments": {"toolset_name": toolset_name}}}
+            connection.request("POST", "/mcp", body=json.dumps(request), headers=session_headers)
+            response = connection.getresponse()
+            payload = json.loads(response.read().decode("utf-8"))
+            if response.status != 200 or "error" in payload:
+                return {"success": False, "error": "production_unreal_mcp_describe_toolset_failed", "toolset": toolset_name, "transport": payload}
+            content = payload.get("result", {}).get("content", [])
+            text = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+            try:
+                detail = json.loads(text)
+                matching_tools = [
+                    tool for tool in detail.get("tools", [])
+                    if any(keyword in (str(tool.get("name", "")) + " " + str(tool.get("description", ""))).lower() for keyword in keywords)
+                ]
+                toolsets[toolset_name] = (
+                    [{"name": tool.get("name", ""), "description": tool.get("description", "")} for tool in matching_tools]
+                    if toolset_name == "EditorToolset.EditorAppToolset"
+                    else matching_tools
+                )
+            except json.JSONDecodeError:
+                toolsets[toolset_name] = []
+        environment_request = {
+            "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+            "params": {"name": "call_tool", "arguments": {
+                "toolset_name": "editor_toolset.toolsets.programmatic.ProgrammaticToolset",
+                "tool_name": "get_execution_environment", "arguments": {},
+            }},
+        }
+        connection.request("POST", "/mcp", body=json.dumps(environment_request), headers=session_headers)
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        if response.status != 200 or "error" in payload:
+            return {"success": False, "error": "production_unreal_mcp_programmatic_environment_failed", "transport": payload}
+        content = payload.get("result", {}).get("content", [])
+        environment = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+        return {"success": True, "toolsets": toolsets, "programmatic_environment": environment[:20000]}
+    finally:
+        connection.close()
+
+
+def mcp_slate_snapshot() -> dict[str, Any]:
+    """Return the live production editor's native Slate accessibility snapshot."""
+    if not _mcp_ready():
+        return {"success": False, "error": "production_unreal_mcp_not_ready"}
+    connection = http.client.HTTPConnection(MCP_HOST, MCP_PORT, timeout=8)
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    try:
+        initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "CotS Production Lifecycle", "version": "1.0"}}}
+        connection.request("POST", "/mcp", body=json.dumps(initialize), headers=headers)
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        session_id = response.getheader("Mcp-Session-Id")
+        if response.status != 200 or not session_id:
+            return {"success": False, "error": "production_unreal_mcp_initialize_failed"}
+        protocol_version = payload.get("result", {}).get("protocolVersion", "2025-11-25")
+        session_headers = {**headers, "Mcp-Session-Id": session_id, "Mcp-Protocol-Version": protocol_version}
+        connection.request("POST", "/mcp", body=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}), headers=session_headers)
+        initialized = connection.getresponse()
+        initialized.read()
+        if initialized.status not in (200, 202):
+            return {"success": False, "error": "production_unreal_mcp_initialized_notification_failed"}
+        request = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "call_tool", "arguments": {"toolset_name": "SlateInspectorToolset.SlateInspectorToolset", "tool_name": "Snapshot", "arguments": {"ref": "", "maxDepth": 8}}}}
+        connection.request("POST", "/mcp", body=json.dumps(request), headers=session_headers)
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        if response.status != 200 or "error" in payload:
+            return {"success": False, "error": "production_unreal_mcp_slate_snapshot_failed", "transport": payload}
+        content = payload.get("result", {}).get("content", [])
+        snapshot = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+        return {"success": True, "snapshot": snapshot[:30000]}
+    finally:
+        connection.close()
+
+
+def mcp_slate_observe_main() -> dict[str, Any]:
+    """Observe and snapshot the main production editor window for UI discovery."""
+    if not _mcp_ready():
+        return {"success": False, "error": "production_unreal_mcp_not_ready"}
+    connection = http.client.HTTPConnection(MCP_HOST, MCP_PORT, timeout=8)
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    try:
+        initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "CotS Production Lifecycle", "version": "1.0"}}}
+        connection.request("POST", "/mcp", body=json.dumps(initialize), headers=headers)
+        response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8")); session_id = response.getheader("Mcp-Session-Id")
+        if response.status != 200 or not session_id:
+            return {"success": False, "error": "production_unreal_mcp_initialize_failed"}
+        session_headers = {**headers, "Mcp-Session-Id": session_id, "Mcp-Protocol-Version": payload.get("result", {}).get("protocolVersion", "2025-11-25")}
+        connection.request("POST", "/mcp", body=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}), headers=session_headers)
+        initialized = connection.getresponse(); initialized.read()
+        if initialized.status not in (200, 202):
+            return {"success": False, "error": "production_unreal_mcp_initialized_notification_failed"}
+        for request_id, tool_name, arguments in ((2, "Observe", {"ref": "w1", "maxDepth": 20}), (3, "Snapshot", {"ref": "w1", "maxDepth": 20})):
+            request = {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": {"name": "call_tool", "arguments": {"toolset_name": "SlateInspectorToolset.SlateInspectorToolset", "tool_name": tool_name, "arguments": arguments}}}
+            connection.request("POST", "/mcp", body=json.dumps(request), headers=session_headers)
+            response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8"))
+            if response.status != 200 or "error" in payload:
+                return {"success": False, "error": "production_unreal_mcp_slate_observe_main_failed", "tool": tool_name, "transport": payload}
+            content = payload.get("result", {}).get("content", [])
+            if tool_name == "Snapshot":
+                snapshot = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+        return {"success": True, "snapshot": snapshot[:50000]}
+    finally:
+        connection.close()
+
+
+def mcp_slate_open_file_menu() -> dict[str, Any]:
+    """Open the observed main editor File menu and return its native snapshot."""
+    if not _mcp_ready():
+        return {"success": False, "error": "production_unreal_mcp_not_ready"}
+    connection = http.client.HTTPConnection(MCP_HOST, MCP_PORT, timeout=8)
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    try:
+        initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "CotS Production Lifecycle", "version": "1.0"}}}
+        connection.request("POST", "/mcp", body=json.dumps(initialize), headers=headers)
+        response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8")); session_id = response.getheader("Mcp-Session-Id")
+        if response.status != 200 or not session_id:
+            return {"success": False, "error": "production_unreal_mcp_initialize_failed"}
+        session_headers = {**headers, "Mcp-Session-Id": session_id, "Mcp-Protocol-Version": payload.get("result", {}).get("protocolVersion", "2025-11-25")}
+        connection.request("POST", "/mcp", body=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}), headers=session_headers)
+        initialized = connection.getresponse(); initialized.read()
+        if initialized.status not in (200, 202):
+            return {"success": False, "error": "production_unreal_mcp_initialized_notification_failed"}
+        for request_id, tool_name, arguments in ((2, "Click", {"ref": "m1"}), (3, "Snapshot", {"ref": "", "maxDepth": 12})):
+            request = {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": {"name": "call_tool", "arguments": {"toolset_name": "SlateInspectorToolset.SlateInspectorToolset", "tool_name": tool_name, "arguments": arguments}}}
+            connection.request("POST", "/mcp", body=json.dumps(request), headers=session_headers)
+            response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8"))
+            if response.status != 200 or "error" in payload:
+                return {"success": False, "error": "production_unreal_mcp_file_menu_failed", "tool": tool_name, "transport": payload}
+            content = payload.get("result", {}).get("content", [])
+            if tool_name == "Snapshot":
+                snapshot = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+        return {"success": True, "snapshot": snapshot[:30000]}
+    finally:
+        connection.close()
+
+
+def mcp_slate_inspect_file_menu() -> dict[str, Any]:
+    """Observe the already-open native File menu and return its actionable entries."""
+    if not _mcp_ready():
+        return {"success": False, "error": "production_unreal_mcp_not_ready"}
+    connection = http.client.HTTPConnection(MCP_HOST, MCP_PORT, timeout=8)
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    try:
+        initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "CotS Production Lifecycle", "version": "1.0"}}}
+        connection.request("POST", "/mcp", body=json.dumps(initialize), headers=headers)
+        response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8")); session_id = response.getheader("Mcp-Session-Id")
+        if response.status != 200 or not session_id:
+            return {"success": False, "error": "production_unreal_mcp_initialize_failed"}
+        session_headers = {**headers, "Mcp-Session-Id": session_id, "Mcp-Protocol-Version": payload.get("result", {}).get("protocolVersion", "2025-11-25")}
+        connection.request("POST", "/mcp", body=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}), headers=session_headers)
+        initialized = connection.getresponse(); initialized.read()
+        if initialized.status not in (200, 202):
+            return {"success": False, "error": "production_unreal_mcp_initialized_notification_failed"}
+        for request_id, tool_name, arguments in ((2, "Observe", {"ref": "w4", "maxDepth": 20}), (3, "Snapshot", {"ref": "w4", "maxDepth": 20})):
+            request = {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": {"name": "call_tool", "arguments": {"toolset_name": "SlateInspectorToolset.SlateInspectorToolset", "tool_name": tool_name, "arguments": arguments}}}
+            connection.request("POST", "/mcp", body=json.dumps(request), headers=session_headers)
+            response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8"))
+            if response.status != 200 or "error" in payload:
+                return {"success": False, "error": "production_unreal_mcp_file_menu_inspection_failed", "tool": tool_name, "transport": payload}
+            content = payload.get("result", {}).get("content", [])
+            if tool_name == "Snapshot":
+                snapshot = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+        return {"success": True, "snapshot": snapshot[:30000]}
+    finally:
+        connection.close()
+
+
+def mcp_slate_open_new_level_dialog() -> dict[str, Any]:
+    """Open the native New Level dialog from the observed File menu."""
+    if not _mcp_ready():
+        return {"success": False, "error": "production_unreal_mcp_not_ready"}
+    connection = http.client.HTTPConnection(MCP_HOST, MCP_PORT, timeout=8)
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    try:
+        initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "CotS Production Lifecycle", "version": "1.0"}}}
+        connection.request("POST", "/mcp", body=json.dumps(initialize), headers=headers)
+        response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8")); session_id = response.getheader("Mcp-Session-Id")
+        if response.status != 200 or not session_id:
+            return {"success": False, "error": "production_unreal_mcp_initialize_failed"}
+        session_headers = {**headers, "Mcp-Session-Id": session_id, "Mcp-Protocol-Version": payload.get("result", {}).get("protocolVersion", "2025-11-25")}
+        connection.request("POST", "/mcp", body=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}), headers=session_headers)
+        initialized = connection.getresponse(); initialized.read()
+        if initialized.status not in (200, 202):
+            return {"success": False, "error": "production_unreal_mcp_initialized_notification_failed"}
+        for request_id, tool_name, arguments in ((2, "Click", {"ref": "g4"}), (3, "Snapshot", {"ref": "", "maxDepth": 12})):
+            request = {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": {"name": "call_tool", "arguments": {"toolset_name": "SlateInspectorToolset.SlateInspectorToolset", "tool_name": tool_name, "arguments": arguments}}}
+            connection.request("POST", "/mcp", body=json.dumps(request), headers=session_headers)
+            response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8"))
+            if response.status != 200 or "error" in payload:
+                return {"success": False, "error": "production_unreal_mcp_new_level_dialog_failed", "tool": tool_name, "transport": payload}
+            content = payload.get("result", {}).get("content", [])
+            if tool_name == "Snapshot":
+                snapshot = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+        return {"success": True, "snapshot": snapshot[:30000]}
+    finally:
+        connection.close()
+
+
 def open_editor() -> dict[str, Any]:
     info = status()
     if info["editor_running"]:
@@ -473,6 +811,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="operation", required=True)
     sub.add_parser("status")
+    sub.add_parser("mcp-diagnostics")
+    sub.add_parser("mcp-toolset-diagnostics")
+    sub.add_parser("mcp-meta-tools")
+    sub.add_parser("mcp-map-tool-diagnostics")
+    sub.add_parser("mcp-slate-snapshot")
+    sub.add_parser("mcp-slate-observe-main")
+    sub.add_parser("mcp-slate-open-file-menu")
+    sub.add_parser("mcp-slate-inspect-file-menu")
+    sub.add_parser("mcp-slate-open-new-level-dialog")
     sub.add_parser("bootstrap")
     manifest = sub.add_parser("apply-manifest"); manifest.add_argument("manifest")
     build_parser = sub.add_parser("build"); build_parser.add_argument("--target", choices=("editor", "game", "server"), default="editor"); build_parser.add_argument("--timeout", type=int, default=1800)
@@ -484,6 +831,15 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.operation == "status": value = status()
+        elif args.operation == "mcp-diagnostics": value = mcp_diagnostics()
+        elif args.operation == "mcp-toolset-diagnostics": value = mcp_toolset_diagnostics()
+        elif args.operation == "mcp-meta-tools": value = mcp_meta_tools()
+        elif args.operation == "mcp-map-tool-diagnostics": value = mcp_map_tool_diagnostics()
+        elif args.operation == "mcp-slate-snapshot": value = mcp_slate_snapshot()
+        elif args.operation == "mcp-slate-observe-main": value = mcp_slate_observe_main()
+        elif args.operation == "mcp-slate-open-file-menu": value = mcp_slate_open_file_menu()
+        elif args.operation == "mcp-slate-inspect-file-menu": value = mcp_slate_inspect_file_menu()
+        elif args.operation == "mcp-slate-open-new-level-dialog": value = mcp_slate_open_new_level_dialog()
         elif args.operation == "bootstrap": value = bootstrap()
         elif args.operation == "apply-manifest": value = apply_manifest(args.manifest)
         elif args.operation == "build": value = build(args.target, args.timeout)

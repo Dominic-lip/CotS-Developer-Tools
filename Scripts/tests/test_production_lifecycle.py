@@ -48,6 +48,12 @@ class ProductionLifecycleTests(unittest.TestCase):
             "BuildSettingsVersion.V7",
             (lifecycle.PRODUCTION / "Source" / "CotSEditor.Target.cs").read_text(encoding="utf-8"),
         )
+        descriptor = json.loads((lifecycle.PRODUCTION / "CotS.uproject").read_text(encoding="utf-8"))
+        self.assertEqual(
+            [plugin["Name"] for plugin in descriptor["Plugins"]],
+            ["ModelContextProtocol", "AllToolsets"],
+        )
+        self.assertTrue((lifecycle.PRODUCTION / "Config" / "DefaultEditorPerProjectUserSettings.ini").is_file())
         self.assertFalse((lifecycle.PRODUCTION / ".git").exists())
 
     def test_bootstrap_never_overwrites_conflicting_existing_file(self):
@@ -100,6 +106,14 @@ class ProductionLifecycleTests(unittest.TestCase):
         result = lifecycle.apply_manifest("normalize.json")
         self.assertEqual(result["changed"], ["Config/DefaultInput.ini"])
         self.assertEqual(target.read_text(encoding="utf-8"), "[Input]\nValue=True\n")
+
+    def test_mcp_diagnostics_reports_fixed_project_configuration(self):
+        lifecycle.bootstrap(initialize_git=False)
+        result = lifecycle.mcp_diagnostics()
+        self.assertEqual(result["enabled_plugins"], ["AllToolsets", "ModelContextProtocol"])
+        self.assertTrue(result["settings_exists"])
+        self.assertEqual(result["server_url_path"], "/mcp")
+        self.assertTrue(result["auto_start_server"])
 
     def test_manifest_filename_itself_is_bounded(self):
         with self.assertRaises(lifecycle.Refused):
