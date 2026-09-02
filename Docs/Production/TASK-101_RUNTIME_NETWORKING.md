@@ -1,0 +1,44 @@
+# TASK-101 Runtime and Networking Contract
+
+## Direction of dependencies
+
+`CotSRuntime` owns actor-neutral authority rules, connection/session lifecycle,
+replicated gameplay state, and multiplayer test fixtures. Gameplay domains
+depend on it; it depends only on Unreal Engine networking primitives and
+small shared value types. Presentation, UI, animation, input, platform
+identity, persistence adapters, simulation, combat and inventory must not
+create reverse dependencies into each other through runtime internals.
+
+`CotSGame` owns game mode, player controller, player state and pawn assembly.
+It composes runtime services but cannot become a persistence or platform API
+client. `CotSClient` and `CotSServer` targets package the same authority model;
+server builds exclude cosmetic-only code paths.
+
+## Authority and replication rules
+
+- Clients submit intent only. Every server RPC validates ownership, actor
+  lifetime, connection/session state, range/rate/invariant constraints, and
+  required authority before changing state.
+- Server-owned state is the only source of replicated truth. Replicated data
+  exposes the minimum view required by the recipient; private ownership and
+  later persistence identities are not broadcast by default.
+- Prediction is opt-in and domain-specific. A client may render reversible
+  local feedback, but reconciliation follows server results and no predicted
+  value is treated as authoritative.
+- Disconnect destroys transient connection ownership but not durable identity;
+  persistence/account reconstruction remains an interface for TASK-102/103.
+
+## Initial automated proof
+
+The harness will use UE automation to prove listen/dedicated-compatible
+connect, server spawn, replicated authority state, disconnect, and reconnect.
+It must test both accepted requests and an invalid non-owning request without
+requiring a website, platform service, or durable database.
+
+## Build and lifecycle
+
+Use only the fixed production lifecycle bridge for production builds and
+lifecycle. TASK-015 already proved editor and game builds plus smoke. The
+installed UE distribution currently refuses a server target; TASK-101 retains
+the target declaration and records this environmental limitation until a
+server-capable engine is supplied.

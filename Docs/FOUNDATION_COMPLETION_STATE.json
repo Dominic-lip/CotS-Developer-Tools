@@ -23,7 +23,7 @@
     {"id":"TASK-015","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-015_PRODUCTION_BOOTSTRAP.md: production baseline, canonical editor build, native MCP, saved /Game/Maps/CotS_Entry, and fixed smoke exit-0 map-load proof"]},
     {"id":"TASK-016","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-016_CLAUDE_ADAPTER_PROOF.md: independent same-session Codex and Claude Host MCP + native Unreal MCP proofs, toolset enumeration, read-only inspection, and lock-contention/read-only-unaffected proof for both adapters"]},
     {"id":"TASK-100","status":"COMPLETE_VERIFIED","evidence":["Docs/Production/EXISTING_WORK_INDEX.md: clean TASK-015 production baseline, deterministic lifecycle routing, shallow Shardlands index, and explicit peer-repository freshness caveats"]},
-    {"id":"TASK-101","status":"NOT_STARTED"},
+    {"id":"TASK-101","status":"PARTIAL","evidence":["Docs/Production/Reuse/TASK-101.md and Docs/Production/TASK-101_RUNTIME_NETWORKING.md: donor decision and production authority contract"]},
     {"id":"TASK-102","status":"NOT_STARTED"},
     {"id":"TASK-103","status":"NOT_STARTED"},
     {"id":"TASK-104","status":"NOT_STARTED"},
