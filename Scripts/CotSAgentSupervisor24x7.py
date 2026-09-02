@@ -27,7 +27,19 @@ telemetry = DailyTelemetry()
 _original_load_state = base.load_state
 _original_parse = base.parse_compact_context
 _original_scheduled_task_instruction = base.scheduled_task_instruction
+_original_turn_outcome = base.turn_outcome
 ROUTING_OVERRIDE_MAX_AGE_SECONDS = 6 * 60 * 60
+
+# TASK-016 exposed a topology mismatch rather than a missing capability: a
+# Codex App Server turn cannot recursively conjure a Claude MCP client, but the
+# supervisor already owns a first-class Claude adapter. When Codex reports this
+# exact provider-capability boundary, route the next turn through the existing
+# structured HANDOFF mechanism instead of restarting the same Codex turn.
+CLAUDE_HANDOFF_GATE_PATTERNS = (
+    "no claude adapter",
+    "no claude mcp client",
+    "no claude client capability",
+)
 
 PRODUCTION_ADAPTER_INSTRUCTIONS = r"""
 For TASK-015 and TASK-100 through TASK-115 only, the scheduled task itself is
@@ -172,6 +184,36 @@ def hardened_parse_compact_context(text: str) -> dict[str, Any]:
     return sanitized
 
 
+def hardened_turn_outcome(text: str) -> tuple[str, str]:
+    """Translate the observed TASK-016 missing-Claude-client gate to HANDOFF.
+
+    The provider is describing its own App Server client surface, not the
+    supervisor's capabilities. The supervisor already has ClaudeAgent and is
+    the component responsible for provider rotation, so another Codex retry can
+    never satisfy this gate. Only the narrow RECOVERABLE_PROVIDER + explicit
+    missing-Claude-client wording is rewritten; all other gates are preserved.
+    """
+    kind, detail = _original_turn_outcome(text)
+    if kind != "RECOVERABLE_GATE":
+        return kind, detail
+    category, separator, remainder = detail.partition("|")
+    reason, separator2, _action = remainder.partition("|") if separator else ("", "", "")
+    normalized = " ".join(reason.lower().split())
+    if (
+        category == "RECOVERABLE_PROVIDER"
+        and separator2
+        and any(pattern in normalized for pattern in CLAUDE_HANDOFF_GATE_PATTERNS)
+    ):
+        telemetry.emit(
+            "PROVIDER_HANDOFF_REPAIR",
+            "Converted missing Claude client capability gate into supervisor handoff",
+            target="claude",
+            reason=reason,
+        )
+        return "HANDOFF", f"claude:{reason}"
+    return kind, detail
+
+
 def hardened_compact_context(state: dict[str, Any]) -> dict[str, Any]:
     raw = state.get("compact_task_context") if isinstance(state, dict) else {}
     return sanitize_context(raw)
@@ -214,6 +256,7 @@ def hardened_scheduled_task_instruction(task_override: str | None = None) -> str
 def install_hardening() -> None:
     base.load_state = hardened_load_state
     base.parse_compact_context = hardened_parse_compact_context
+    base.turn_outcome = hardened_turn_outcome
     base.compact_context = hardened_compact_context
     base.merge_compact_context = hardened_merge_compact_context
     base._bounded = hardened_bounded
