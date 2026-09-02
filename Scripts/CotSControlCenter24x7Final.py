@@ -12,11 +12,17 @@ from tkinter import messagebox, ttk
 from typing import Any
 
 import CotSControlCenter24x7Enhanced as enhanced
+from CotSProcessLiveness import process_live
 from CotSUsageLedgerSafe import ReadMostlyProviderUsageLedger
 
 # The GUI never waits behind the watchdog's writer lease. If the watchdog is
 # polling quota, the UI displays the latest persisted snapshot instead.
 enhanced.ProviderUsageLedger = ReadMostlyProviderUsageLedger
+# The enhanced UI inherited a POSIX-style os.kill(pid, 0) liveness probe. On
+# Windows a stale/racing PID can raise CPython SystemError/OSError state and
+# abort the entire one-second refresh, leaving every panel blank. Use the same
+# non-fatal Win32 process query already proven by the production watchdog.
+enhanced.pid_live = process_live
 # Any Control Center fallback launch must start the production watchdog, not
 # the intermediate enhanced entry point.
 enhanced.WATCHDOG = enhanced.SCRIPTS / "CotSWatchdog24x7Final.py"
