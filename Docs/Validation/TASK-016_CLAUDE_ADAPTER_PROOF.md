@@ -112,3 +112,57 @@ one session without reconfiguration:
 This is Codex's complete independent connectivity/toolset/read-only/Host-lock
 proof. ToolLab remains running and MCP-ready with no owner for Claude's fresh
 native-MCP turn.
+
+## Claude — native Unreal MCP proof (fresh session)
+
+Date: 2026-09-02, a fresh Claude turn started while ToolLab remained open
+from the prior turn (`editor_pid 52020` unchanged throughout). Per the
+TASK-003 precedent above, this Claude process's `unreal-mcp` HTTP MCP client
+connected successfully at session start this time, since the endpoint was
+already up when the process began:
+
+1. `AcquireMutationLock(agent_id="supervisor-task-016")` — `{"acquired": true}`.
+2. `list_toolsets` — enumerated the full native registry (Niagara, Sequencer,
+   UMG, PCG, GAS, editor/scene/actor/asset toolsets, etc.) plus all CotS
+   toolsets in the same call: `CotSFoundationToolset`, `CotSInspectionToolset`,
+   `CotSExecutionToolset`, `CotSMutationToolset`, `CotSLifecycleToolset`,
+   `CotSValidationToolset` — satisfying both the native-toolset and
+   CotS-toolset enumeration requirements at once.
+3. Read-only inspection calls:
+   - `CotSDeveloperTools.CotSFoundationToolset.GetStatus` ->
+     `plugin: CotSDeveloperTools`, `plugin_version: 0.2.0`,
+     `unreal_version: 5.8.1-56057345+++UE5+Release-5.8`.
+   - `CotSDeveloperTools.CotSInspectionToolset.GetProjectStatus` ->
+     `project_name: CotSToolLab`, `engine_version: 5.8.1-...`,
+     `current_map: /Temp/Untitled_1`, `cots_plugin_enabled: true`,
+     `cots_module_loaded: true`, `pie_running: false`.
+   These values match both Codex's proof above and Claude's own prior-turn
+   Host MCP identity (`editor_pid 52020` unchanged since this task began),
+   confirming both providers independently inspected the same running editor.
+4. `ReleaseMutationLock(agent_id="supervisor-task-016")` — `{"released": true}`.
+
+`describe_toolset(CotSDeveloperTools.CotSMutationToolset)` was inspected to
+check whether native mutation calls carry their own lock-owner parameter —
+they do not. The single-mutating-agent lease is a CotSHostMcp-layer control
+(`AGENTS.md` "Agent concurrency safety") enforced on lifecycle/build/test
+operations via the `agent_id` lock, not a per-call parameter on native Unreal
+MCP mutation tools; native mutation access is governed by policy (only the
+lock-holding agent may use it) rather than a second mechanical gate. The
+lock-contention proof required by `Tasks/016_DUAL_AGENT_MCP_PARITY.md` is
+therefore fully satisfied by the CotSHostMcp-level proofs already recorded
+above for both Claude (standby `AcquireMutationLock` refused with
+`mutation_lock_held`, standby `GetToolLabStatus` unaffected) and Codex
+(`codex-task-016-standby` refused, owner lock released cleanly).
+
+## Final disposition
+
+Both adapters have now independently completed, in one session each, all
+five required steps: CotS Host MCP connect/lock acquire-release, native
+Unreal MCP connect with confirmed project/editor identity, native toolset
+enumeration, CotS toolset enumeration, and one read-only inspection call
+through each server — against the same running `CotSToolLab` editor instance
+(`editor_pid 52020`). The single-mutating-agent lease was independently
+proven to reject standby-agent mutation while leaving standby read-only
+connectivity unaffected, for both Claude and Codex. TASK-016's acceptance
+criteria are met; see `Docs/FOUNDATION_COMPLETION_LEDGER.md` and
+`Docs/FOUNDATION_COMPLETION_STATE.json` for the reconciled status.

@@ -93,4 +93,4 @@ loop guard rather than wake a cloud provider indefinitely.
 - Keep structured results machine-readable even when also logging human-readable summaries.
 
 ## Current phase
-The verified foundation currently runs through `TASK-014`. `TASK-015` is the outstanding production-project bootstrap and is explicitly authorized to create/reconcile `C:\Dev\CotS` through the fixed production lifecycle bridge. `TASK-016` remains outstanding where its durable acceptance evidence is incomplete. After the foundation ledger records both as `COMPLETE_VERIFIED`, continue with `TASK-100` and follow `Docs/PRODUCTION_ROADMAP.md` in order. Shardlands remains donor/reference and read-only.
+The verified foundation now runs through `TASK-016` (`Docs/FOUNDATION_COMPLETION_LEDGER.md`, `Docs/FOUNDATION_COMPLETION_STATE.json`). Continue with `TASK-100` and follow `Docs/PRODUCTION_ROADMAP.md` in order. Shardlands remains donor/reference and read-only.

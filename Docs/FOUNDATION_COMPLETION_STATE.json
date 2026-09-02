@@ -21,7 +21,7 @@
     {"id":"TASK-013","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-013_LOCOMOTION_CONTENT_PREREQUISITE.md: canonical UE 5.8 build, native-MCP Mannequin-to-distinct-MetaHuman IK Rig/Retargeter creation and batch-retarget output proof, independent output-skeleton inspection, and 13/13 CotS automation pass"]},
     {"id":"TASK-014","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-014_SHARDLANDS_DONOR_AUDIT.md: classified donor inventory with dependencies and confidence"]},
     {"id":"TASK-015","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-015_PRODUCTION_BOOTSTRAP.md: production baseline, canonical editor build, native MCP, saved /Game/Maps/CotS_Entry, and fixed smoke exit-0 map-load proof"]},
-    {"id":"TASK-016","status":"PARTIAL"},
+    {"id":"TASK-016","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-016_CLAUDE_ADAPTER_PROOF.md: independent same-session Codex and Claude Host MCP + native Unreal MCP proofs, toolset enumeration, read-only inspection, and lock-contention/read-only-unaffected proof for both adapters"]},
     {"id":"TASK-100","status":"NOT_STARTED"},
     {"id":"TASK-101","status":"NOT_STARTED"},
     {"id":"TASK-102","status":"NOT_STARTED"},
