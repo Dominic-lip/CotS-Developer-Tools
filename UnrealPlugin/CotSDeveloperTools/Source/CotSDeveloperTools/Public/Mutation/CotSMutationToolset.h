@@ -19,6 +19,10 @@ public:
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString DuplicateAsset(const FString& SourceObjectPath, const FString& DestinationObjectPath, bool bDryRun = false);
     /** Runs UE 5.8's native duplicate-and-retarget operation only into /Game/CotSMutationLive/, after exact-path and skeleton preflight. */
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString BatchRetargetAnimationAssets(const TArray<FString>& SourceAssetPaths, const FString& RetargeterPath, const FString& TargetPath, bool bDryRun = false);
+    /** Creates and configures a disposable IK Rig from one exact Skeletal Mesh using UE's public IK Rig controller. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString CreateDisposableIKRig(const FString& ObjectPath, const FString& SkeletalMeshPath, bool bDryRun = false);
+    /** Creates a disposable IK Retargeter joining two distinct, exact IK Rigs; source and target meshes are independently preflighted. */
+    UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString CreateDisposableIKRetargeter(const FString& ObjectPath, const FString& SourceIKRigPath, const FString& TargetIKRigPath, bool bDryRun = false);
     /** Creates a disposable 2D locomotion Blend Space with typed Speed and Direction axes; PreviewMeshPath may be empty to use the Skeleton's native preview-mesh resolver. */
     UFUNCTION(meta = (AICallable), Category = "CotS Mutation") static FString CreateDisposableLocomotionBlendSpace(const FString& ObjectPath, const FString& SkeletonPath, const FString& PreviewMeshPath, bool bDryRun = false);
     /** Adds one exact-skeleton animation sequence to a disposable locomotion Blend Space at a Speed/Direction coordinate. */

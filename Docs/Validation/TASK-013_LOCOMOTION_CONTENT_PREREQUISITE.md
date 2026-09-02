@@ -1,12 +1,9 @@
 # TASK-013 Progress — Verified Locomotion Content Prerequisite
 
-Task spec: `Tasks/013_ANIMATION_METAHUMAN.md`. This is a partial-progress
-record, not a completion: it establishes the content prerequisite the
-acceptance test requires ("a MetaHuman-compatible target plus a small
-locomotion set (idle, four walk directions, jump/fall/land)"); the
-AnimationAuthoringToolset itself (skeleton compatibility inspection,
-retarget batching, Blend Space/AnimBP/state-machine creation, IK/root-motion
-policy checks, locomotion test running) is not yet implemented.
+Task spec: `Tasks/013_ANIMATION_METAHUMAN.md`. This is the durable completion
+record: it establishes the MetaHuman-compatible locomotion content prerequisite
+and proves the complete guarded authoring workflow, including a real
+Mannequin-to-MetaHuman native batch-retarget result.
 
 ## Why this content, not Shardlands or MetaHuman Bridge
 
@@ -897,3 +894,54 @@ today's content/inspection/proof work and belongs in its own dedicated
 IK-Rig-authoring engineering task.
 
 Made no mutations this turn (read-only inspection only); released the lock.
+
+## Twenty-seventh increment: distinct-skeleton native batch-retarget proof — TASK-013 complete
+
+The workspace bootstrap junction `ToolLab/Plugins/CotSDeveloperTools` was
+absent in this clean workspace, so the first fixed `BuildToolLab` correctly
+failed before compilation with `Unable to find plugin 'CotSDeveloperTools'`.
+Ran the checked-in `Scripts/Bootstrap-ToolLab.cmd`, which created only the
+expected junction to `UnrealPlugin/CotSDeveloperTools`. The next canonical
+build exposed a UE 5.8 linker requirement from the public IKRig editor
+controller headers; adding the explicit `SlateCore` module dependency fixed
+it. The final fixed Host build returned exit 0 and `Result: Succeeded`.
+
+With the Host lock owned by `supervisor-task-013`, opened ToolLab and used the
+active native Unreal MCP endpoint (no recursive provider launcher) to run the
+following exact, non-dry-run sequence:
+
+1. `CreateDisposableIKRig` created
+   `/Game/CotSMutationLive/IK_MannequinProof.IK_MannequinProof` for
+   `/Game/Characters/Mannequins/Meshes/SKM_Quinn_Simple.SKM_Quinn_Simple`.
+   UE's own auto-definition generated 29 retarget chains.
+2. `CreateDisposableIKRetargeter` created
+   `/Game/CotSMutationLive/RTG_MannequinToMHProof.RTG_MannequinToMHProof`,
+   assigning that new Mannequin rig as source and the real plugin rig
+   `/MetaHumanCharacter/Animation/Retargeting/IK_MH_IKRig.IK_MH_IKRig` as
+   target. The tool independently reported distinct preview meshes:
+   `SKM_Quinn_Simple` and
+   `/MetaHumanCharacter/Body/IdentityTemplate/SKM_Body.SKM_Body`.
+3. Read-only `GetIKRetargeter` reinspection confirmed both exact rig
+   assignments and their chain definitions.
+4. `BatchRetargetAnimationAssets` retargeted the real source locomotion clip
+   `/Game/Characters/Mannequins/Anims/Unarmed/MM_Idle.MM_Idle` into the
+   disposable target and reported the exact output
+   `/Game/CotSMutationLive/RetargetedProof/MM_Idle.MM_Idle`.
+5. Read-only `GetAnimationAsset` independently identified that output as an
+   `AnimSequence` on the distinct MetaHuman body skeleton
+   `/MetaHumanCharacter/Female/Medium/NormalWeight/Body/metahuman_base_skel.metahuman_base_skel`.
+   The source rig, retargeter, and output were saved only after this review.
+
+Closed ToolLab through its fixed graceful lifecycle tool (`unreal_mcp`, exact
+recorded PID verified gone), then ran the fixed `RunCotSAutomation` operation.
+It returned exit 0; `CotSToolLab.log` records 13 discovered `CotS` tests, 13
+`Result={Success}` completions, and `TEST COMPLETE. EXIT CODE: 0`.
+
+This closes the only remaining target capability: guarded IK Rig authoring and
+batch retargeting against a genuinely distinct MetaHuman skeleton. No
+Shardlands asset or project state was read or modified.
+
+After evidence capture, the three exact proof assets (the source IK Rig,
+Retargeter, and retargeted `MM_Idle`) were deleted through the guarded
+`DeleteDisposableAsset` operation. This leaves no disposable binary artifact
+outside the durable validation record.

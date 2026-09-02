@@ -24,6 +24,7 @@ public class CotSDeveloperTools : ModuleRules
             "IKRigEditor",
             "Projects",
             "Slate",
+            "SlateCore",
             "Json",
             "ToolsetRegistry"
         });

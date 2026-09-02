@@ -245,6 +245,15 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     TestTrue(TEXT("Empty retarget batch returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::BatchRetargetAnimationAssets({}, TEXT("/Game/Missing.Missing"), TEXT("/Game/CotSMutationLive/Retargeted"), true)), BatchGuardJson));
     TestFalse(TEXT("Empty retarget batch is rejected before mutation"), BatchGuardJson.IsValid() && BatchGuardJson->GetBoolField(TEXT("success")));
 
+    const FString QuinnPreviewMeshPath = TEXT("/Game/Characters/Mannequins/Meshes/SKM_Quinn_Simple.SKM_Quinn_Simple");
+    TSharedPtr<FJsonObject> IKRigDryRunJson;
+    TestTrue(TEXT("Disposable IK Rig dry-run returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::CreateDisposableIKRig(TEXT("/Game/CotSMutationLive/IK_AutomationPreview.IK_AutomationPreview"), QuinnPreviewMeshPath, true)), IKRigDryRunJson));
+    TestTrue(TEXT("Disposable IK Rig dry-run accepts an exact Skeletal Mesh in its disposable destination"), IKRigDryRunJson.IsValid() && IKRigDryRunJson->GetBoolField(TEXT("success")));
+
+    TSharedPtr<FJsonObject> IKRigPairGuardJson;
+    TestTrue(TEXT("Disposable IK Retargeter same-rig guard returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UCotSMutationToolset::CreateDisposableIKRetargeter(TEXT("/Game/CotSMutationLive/RTG_AutomationPreview.RTG_AutomationPreview"), TEXT("/Game/Missing.IK_Missing"), TEXT("/Game/Missing.IK_Missing"), true)), IKRigPairGuardJson));
+    TestFalse(TEXT("Disposable IK Retargeter rejects unavailable or non-configured IK Rigs before mutation"), IKRigPairGuardJson.IsValid() && IKRigPairGuardJson->GetBoolField(TEXT("success")));
+
     // Since TASK-013 imported a real compatible preview mesh (SKM_Quinn_Simple)
     // for this Skeleton, USkeleton::GetPreviewMesh(bFindIfNotSet=true) now
     // finds and caches it (Skeleton.cpp: GetPreviewMesh -> FindCompatibleMesh
@@ -302,7 +311,6 @@ bool FCotSInspectionSkeletonCompatibilityTest::RunTest(const FString& Parameters
     // This exercises the full real (non-dry-run) pipeline the manual PIE
     // proof used and asserts the underlying graph pin itself, not just the
     // tool's own self-reported JSON, actually changes.
-    const FString QuinnPreviewMeshPath = TEXT("/Game/Characters/Mannequins/Meshes/SKM_Quinn_Simple.SKM_Quinn_Simple");
     const FString TransitionRuleFixturePath = TEXT("/Game/CotSMutationLive/ABP_TransitionRuleFix.ABP_TransitionRuleFix");
     UCotSMutationToolset::DeleteDisposableAsset(TransitionRuleFixturePath, false);
     auto ParseMutation = [this](const FString& Text, TSharedPtr<FJsonObject>& Json, const TCHAR* Label) { return TestTrue(Label, FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Json)); };

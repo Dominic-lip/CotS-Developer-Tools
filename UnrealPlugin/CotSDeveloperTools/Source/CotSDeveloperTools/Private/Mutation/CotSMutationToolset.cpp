@@ -38,7 +38,12 @@
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Misc/PackageName.h"
 #include "RetargetEditor/IKRetargetBatchOperation.h"
+#include "RetargetEditor/IKRetargeterController.h"
+#include "RetargetEditor/IKRetargetFactory.h"
 #include "Retargeter/IKRetargeter.h"
+#include "Rig/IKRigDefinition.h"
+#include "RigEditor/IKRigController.h"
+#include "RigEditor/IKRigDefinitionFactory.h"
 #include "Subsystems/EditorActorSubsystem.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
@@ -63,6 +68,15 @@ void SetDetails(FCotSOperationResult& Result, bool bChanged, bool bUndoable, con
 bool IsExactGameObjectPath(const FString& Path)
 {
     if (!Path.StartsWith(TEXT("/Game/")) || Path.Contains(TEXT(" ")) || !Path.Contains(TEXT("."))) { return false; }
+    const FString PackageName = FPackageName::ObjectPathToPackageName(Path);
+    const FString ObjectName = FPackageName::ObjectPathToObjectName(Path);
+    return FPackageName::IsValidLongPackageName(PackageName, false) && !ObjectName.IsEmpty()
+        && Path.Equals(PackageName + TEXT(".") + ObjectName, ESearchCase::CaseSensitive);
+}
+
+bool IsExactObjectPath(const FString& Path)
+{
+    if (!Path.StartsWith(TEXT("/")) || Path.Contains(TEXT(" ")) || !Path.Contains(TEXT("."))) { return false; }
     const FString PackageName = FPackageName::ObjectPathToPackageName(Path);
     const FString ObjectName = FPackageName::ObjectPathToObjectName(Path);
     return FPackageName::IsValidLongPackageName(PackageName, false) && !ObjectName.IsEmpty()
@@ -128,6 +142,15 @@ FCotSOperationResult InvalidPath(const FString& Operation, const FString& Path, 
 UObject* LoadExactAsset(const FString& ObjectPath)
 {
     if (!IsExactGameObjectPath(ObjectPath)) { return nullptr; }
+    if (UObject* Loaded = FindObject<UObject>(nullptr, *ObjectPath)) { return IsValid(Loaded) ? Loaded : nullptr; }
+    FAssetData Data;
+    const EExists Exists = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().TryGetAssetByObjectPath(FSoftObjectPath(ObjectPath), Data);
+    return Exists == EExists::Exists ? Data.GetAsset() : nullptr;
+}
+
+UObject* LoadExactEditorAsset(const FString& ObjectPath)
+{
+    if (!IsExactObjectPath(ObjectPath)) { return nullptr; }
     if (UObject* Loaded = FindObject<UObject>(nullptr, *ObjectPath)) { return IsValid(Loaded) ? Loaded : nullptr; }
     FAssetData Data;
     const EExists Exists = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().TryGetAssetByObjectPath(FSoftObjectPath(ObjectPath), Data);
@@ -273,6 +296,91 @@ FString UCotSMutationToolset::BatchRetargetAnimationAssets(const TArray<FString>
     Result.Data->SetArrayField(TEXT("output_assets"), OutputPaths);
     Result.Validation.Add(TEXT("re-inspect every output asset and save only after review"));
     return Finish(Result, true, false, TEXT("Native batch retarget is package-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::CreateDisposableIKRig(const FString& ObjectPath, const FString& SkeletalMeshPath, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.CreateDisposableIKRig");
+    if (!IsDisposableAssetPath(ObjectPath)) { return FCotSOperationResult::Fail(Op, TEXT("outside_disposable_scope"), TEXT("IK Rig creation is restricted to /Game/CotSMutationLive/ exact object paths."), bDryRun).ToJson(); }
+    USkeletalMesh* Mesh = Cast<USkeletalMesh>(LoadExactEditorAsset(SkeletalMeshPath));
+    if (!Mesh) { return FCotSOperationResult::Fail(Op, TEXT("skeletal_mesh_not_found"), TEXT("SkeletalMeshPath must resolve to an exact USkeletalMesh asset."), bDryRun).ToJson(); }
+
+    FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath, SkeletalMeshPath);
+    if (UObject* Existing = LoadExactAsset(ObjectPath))
+    {
+        UIKRigDefinition* ExistingRig = Cast<UIKRigDefinition>(Existing);
+        UIKRigController* ExistingController = ExistingRig ? UIKRigController::GetController(ExistingRig) : nullptr;
+        if (!ExistingController || ExistingController->GetSkeletalMesh() != Mesh)
+        {
+            return FCotSOperationResult::Fail(Op, TEXT("destination_collision"), TEXT("The destination is occupied by an IK Rig configured for a different mesh or by another asset class."), bDryRun).ToJson();
+        }
+        Result.Validation.Add(TEXT("already_exists_with_requested_mesh"));
+        return Finish(Result, false, false, TEXT("IK Rig assets are package-backed and not transaction-backed."));
+    }
+    if (bDryRun) { Result.Validation.Add(TEXT("validated_disposable_destination_and_mesh")); return Finish(Result, true, false, TEXT("IK Rig assets are package-backed and not transaction-backed.")); }
+
+    const FString ObjectName = FPackageName::ObjectPathToObjectName(ObjectPath);
+    const FString PackagePath = FPackageName::ObjectPathToPackageName(ObjectPath).LeftChop(ObjectName.Len() + 1);
+    UIKRigDefinition* Rig = UIKRigDefinitionFactory::CreateNewIKRigAsset(PackagePath, ObjectName);
+    UIKRigController* Controller = Rig ? UIKRigController::GetController(Rig) : nullptr;
+    if (!Controller || !Controller->SetSkeletalMesh(Mesh)) { return FCotSOperationResult::Fail(Op, TEXT("ik_rig_configuration_failed"), TEXT("UE could not initialize the new IK Rig with the requested Skeletal Mesh.")).ToJson(); }
+    const bool bAutoDefinitionApplied = Controller->ApplyAutoGeneratedRetargetDefinition();
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("skeletal_mesh"), Mesh->GetPathName());
+    Result.Data->SetBoolField(TEXT("auto_retarget_definition_applied"), bAutoDefinitionApplied);
+    Result.Data->SetNumberField(TEXT("retarget_chain_count"), Controller->GetRetargetChains().Num());
+    Result.Validation.Add(TEXT("created_with_ue_ik_rig_factory_and_controller"));
+    Result.Validation.Add(TEXT("reinspect_with_CotS.Inspection.GetIKRetargeter_after_retargeter_creation"));
+    return Finish(Result, true, false, TEXT("IK Rig assets are package-backed and not transaction-backed."));
+}
+
+FString UCotSMutationToolset::CreateDisposableIKRetargeter(const FString& ObjectPath, const FString& SourceIKRigPath, const FString& TargetIKRigPath, bool bDryRun)
+{
+    constexpr const TCHAR* Op = TEXT("CotS.Mutation.CreateDisposableIKRetargeter");
+    if (!IsDisposableAssetPath(ObjectPath)) { return FCotSOperationResult::Fail(Op, TEXT("outside_disposable_scope"), TEXT("IK Retargeter creation is restricted to /Game/CotSMutationLive/ exact object paths."), bDryRun).ToJson(); }
+    UIKRigDefinition* SourceRig = Cast<UIKRigDefinition>(LoadExactEditorAsset(SourceIKRigPath));
+    UIKRigDefinition* TargetRig = Cast<UIKRigDefinition>(LoadExactEditorAsset(TargetIKRigPath));
+    UIKRigController* SourceController = SourceRig ? UIKRigController::GetController(SourceRig) : nullptr;
+    UIKRigController* TargetController = TargetRig ? UIKRigController::GetController(TargetRig) : nullptr;
+    USkeletalMesh* SourceMesh = SourceController ? SourceController->GetSkeletalMesh() : nullptr;
+    USkeletalMesh* TargetMesh = TargetController ? TargetController->GetSkeletalMesh() : nullptr;
+    if (!SourceRig || !TargetRig || !SourceMesh || !TargetMesh) { return FCotSOperationResult::Fail(Op, TEXT("ik_rig_not_configured"), TEXT("Both exact IK Rig paths must resolve and provide a Skeletal Mesh."), bDryRun).ToJson(); }
+    if (SourceRig == TargetRig || SourceMesh == TargetMesh) { return FCotSOperationResult::Fail(Op, TEXT("source_target_not_distinct"), TEXT("Source and target IK Rigs must use distinct assets and distinct Skeletal Meshes."), bDryRun).ToJson(); }
+
+    FCotSOperationResult Result = Start(Op, bDryRun, ObjectPath, SourceIKRigPath);
+    Result.AddAffectedObject(TargetIKRigPath);
+    if (UObject* Existing = LoadExactAsset(ObjectPath))
+    {
+        UIKRetargeter* ExistingRetargeter = Cast<UIKRetargeter>(Existing);
+        if (!ExistingRetargeter || ExistingRetargeter->GetIKRig(ERetargetSourceOrTarget::Source) != SourceRig || ExistingRetargeter->GetIKRig(ERetargetSourceOrTarget::Target) != TargetRig)
+        {
+            return FCotSOperationResult::Fail(Op, TEXT("destination_collision"), TEXT("The destination is occupied by a differently configured IK Retargeter or another asset class."), bDryRun).ToJson();
+        }
+        Result.Validation.Add(TEXT("already_exists_with_requested_distinct_rigs"));
+        return Finish(Result, false, false, TEXT("IK Retargeter assets are package-backed and not transaction-backed."));
+    }
+    if (bDryRun) { Result.Validation.Add(TEXT("validated_disposable_destination_and_distinct_rigs")); return Finish(Result, true, false, TEXT("IK Retargeter assets are package-backed and not transaction-backed.")); }
+
+    const FString ObjectName = FPackageName::ObjectPathToObjectName(ObjectPath);
+    const FString PackagePath = FPackageName::ObjectPathToPackageName(ObjectPath).LeftChop(ObjectName.Len() + 1);
+    UIKRetargeter* Retargeter = Cast<UIKRetargeter>(FAssetToolsModule::GetModule().Get().CreateAsset(ObjectName, PackagePath, UIKRetargeter::StaticClass(), NewObject<UIKRetargetFactory>()));
+    UIKRetargeterController* Controller = Retargeter ? UIKRetargeterController::GetController(Retargeter) : nullptr;
+    if (!Controller) { return FCotSOperationResult::Fail(Op, TEXT("retargeter_creation_failed"), TEXT("UE could not create a controller for the new IK Retargeter.")).ToJson(); }
+    Controller->SetIKRig(ERetargetSourceOrTarget::Source, SourceRig);
+    Controller->SetIKRig(ERetargetSourceOrTarget::Target, TargetRig);
+    Controller->SetPreviewMesh(ERetargetSourceOrTarget::Source, SourceMesh);
+    Controller->SetPreviewMesh(ERetargetSourceOrTarget::Target, TargetMesh);
+    if (Retargeter->GetIKRig(ERetargetSourceOrTarget::Source) != SourceRig || Retargeter->GetIKRig(ERetargetSourceOrTarget::Target) != TargetRig)
+    {
+        return FCotSOperationResult::Fail(Op, TEXT("retargeter_configuration_failed"), TEXT("UE did not retain both requested IK Rig assignments.")).ToJson();
+    }
+    Result.Data = MakeShared<FJsonObject>();
+    Result.Data->SetStringField(TEXT("source_mesh"), SourceMesh->GetPathName());
+    Result.Data->SetStringField(TEXT("target_mesh"), TargetMesh->GetPathName());
+    Result.Validation.Add(TEXT("created_with_ue_ik_retargeter_factory_and_controller"));
+    Result.Validation.Add(TEXT("source_and_target_meshes_are_distinct"));
+    Result.Validation.Add(TEXT("run_BatchRetargetAnimationAssets_then_reinspect_outputs"));
+    return Finish(Result, true, false, TEXT("IK Retargeter assets are package-backed and not transaction-backed."));
 }
 
 FString UCotSMutationToolset::CreateDisposableLocomotionBlendSpace(const FString& ObjectPath, const FString& SkeletonPath, const FString& PreviewMeshPath, bool bDryRun)
