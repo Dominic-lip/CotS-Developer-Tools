@@ -113,6 +113,32 @@ def ensure_tailscale_serve(timeout: float = 10.0) -> dict[str, Any]:
         return {"success": False, "state": "error", "error": str(error), "target": TAILSCALE_TARGET}
 
 
+def disable_tailscale_serve(timeout: float = 10.0) -> dict[str, Any]:
+    """Disable only the CotS Tailscale Serve exposure, not Tailscale itself."""
+    executable = tailscale_executable()
+    if not executable:
+        return {"success": False, "state": "not_installed", "target": TAILSCALE_TARGET}
+    try:
+        stopped = subprocess.run(
+            [executable, "serve", "off"],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        message = (stopped.stdout or stopped.stderr or "").strip()
+        return {
+            "success": stopped.returncode == 0,
+            "state": "disabled" if stopped.returncode == 0 else "disable_failed",
+            "exit_code": stopped.returncode,
+            "message": message[-1200:],
+            "target": TAILSCALE_TARGET,
+        }
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"success": False, "state": "error", "error": str(error), "target": TAILSCALE_TARGET}
+
+
 class QuotaGraph(tk.Canvas):
     """Two reported Codex quota windows over time; never invents missing data."""
     def __init__(self, master: tk.Misc) -> None:
@@ -250,20 +276,98 @@ class ProductionControlCenter(enhanced.ControlCenter):
         # signed out, or temporarily unavailable.
         self.after(300, self._auto_enable_tailscale)
 
+    def _set_tailscale_toggle(self, enabled: bool, *, busy: bool = False) -> None:
+        self.tailscale_serve_enabled = bool(enabled)
+        if not hasattr(self, "tailscale_toggle"):
+            return
+        if busy:
+            self.tailscale_toggle.configure(text="REMOTE ACCESS  ...", state="disabled", bg=enhanced.WARN)
+            return
+        self.tailscale_toggle.configure(
+            text="REMOTE ACCESS  ON" if enabled else "REMOTE ACCESS  OFF",
+            state="normal",
+            bg=enhanced.GOOD if enabled else enhanced.PANEL2,
+            activebackground=enhanced.GOOD if enabled else enhanced.PANEL2,
+            fg="#ffffff",
+            activeforeground="#ffffff",
+        )
+
     def _auto_enable_tailscale(self) -> None:
+        self._set_tailscale_toggle(False, busy=True)
         def finished(result: Any) -> None:
             if not isinstance(result, dict):
+                self._set_tailscale_toggle(False)
                 return
             if result.get("success"):
+                self._set_tailscale_toggle(True)
                 if hasattr(self, "remote_status"):
                     self.remote_status.set("Tailscale Serve: enabled for CotS telemetry")
             elif result.get("state") == "not_installed":
+                self._set_tailscale_toggle(False)
                 if hasattr(self, "remote_status"):
                     self.remote_status.set("Tailscale CLI not found — remote access not enabled")
-            elif hasattr(self, "remote_status"):
-                detail = str(result.get("error") or result.get("message") or result.get("state") or "unavailable")
-                self.remote_status.set(f"Tailscale auto-enable failed: {detail[:160]}")
+            else:
+                self._set_tailscale_toggle(False)
+                if hasattr(self, "remote_status"):
+                    detail = str(result.get("error") or result.get("message") or result.get("state") or "unavailable")
+                    self.remote_status.set(f"Tailscale auto-enable failed: {detail[:160]}")
         self._background(ensure_tailscale_serve, finished)
+
+    def _toggle_tailscale_serve(self) -> None:
+        enabling = not bool(getattr(self, "tailscale_serve_enabled", False))
+        operation = ensure_tailscale_serve if enabling else disable_tailscale_serve
+        self._set_tailscale_toggle(not enabling, busy=True)
+
+        def finished(result: Any) -> None:
+            success = isinstance(result, dict) and bool(result.get("success"))
+            enabled = enabling if success else not enabling
+            self._set_tailscale_toggle(enabled)
+            if not hasattr(self, "remote_status"):
+                return
+            if success:
+                self.remote_status.set(
+                    "Tailscale Serve: enabled for CotS telemetry" if enabled
+                    else "Tailscale Serve: disabled — telemetry is localhost-only"
+                )
+            else:
+                detail = str((result or {}).get("error") or (result or {}).get("message") or (result or {}).get("state") or "operation failed") if isinstance(result, dict) else "operation failed"
+                self.remote_status.set(f"Tailscale toggle failed: {detail[:160]}")
+            if hasattr(self, "remote_output") and isinstance(result, dict):
+                self.remote_output.delete("1.0", "end")
+                self.remote_output.insert("1.0", str(result.get("message") or result.get("error") or result.get("state") or ""))
+
+        self._background(operation, finished)
+
+    def _build_remote(self) -> None:
+        super()._build_remote()
+        page = self.pages["Remote / Tunnel"]
+        # Replace the old one-way Enable button with a visible two-state control.
+        for child in page.winfo_children():
+            if isinstance(child, ttk.Frame):
+                for widget in child.winfo_children():
+                    try:
+                        if isinstance(widget, ttk.Button) and str(widget.cget("text")) == "Enable Tailscale Serve":
+                            widget.destroy()
+                    except tk.TclError:
+                        pass
+        self.tailscale_serve_enabled = False
+        self.tailscale_toggle = tk.Button(
+            page,
+            text="REMOTE ACCESS  OFF",
+            command=self._toggle_tailscale_serve,
+            relief="flat",
+            bd=0,
+            padx=18,
+            pady=8,
+            width=20,
+            bg=enhanced.PANEL2,
+            fg="#ffffff",
+            activebackground=enhanced.PANEL2,
+            activeforeground="#ffffff",
+            font=("Segoe UI", 10, "bold"),
+            cursor="hand2",
+        )
+        self.tailscale_toggle.grid(row=4, column=0, sticky="e", pady=10)
 
     def _build(self) -> None:
         super()._build()
