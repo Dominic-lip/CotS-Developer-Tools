@@ -5,10 +5,15 @@ from __future__ import annotations
 import time
 
 import CotSWatchdog24x7Enhanced as enhanced
+from CotSProcessLiveness import process_live
 from CotSUsageLedgerSafe import LockedProviderUsageLedger
 
 # EnhancedWatchdog resolves this module global when it constructs the ledger.
 enhanced.ProviderUsageLedger = LockedProviderUsageLedger
+# Base watchdog cleanup must never use os.kill(pid, 0) as a Windows liveness
+# probe. A stale/racing supervisor PID previously raised SystemError and killed
+# the entire outer watchdog immediately after successful local governor recovery.
+enhanced.base._pid_live = process_live
 
 
 class ProductionWatchdog(enhanced.EnhancedWatchdog):
