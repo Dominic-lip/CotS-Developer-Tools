@@ -40,8 +40,9 @@ def _state(reason: str, *, blocked: bool = True) -> dict:
     }
 
 
-def _supervisor(*, claude_status: str = "IDLE", explicit_target: str | None = None) -> dict:
+def _supervisor(*, claude_status: str = "IDLE", explicit_target: str | None = None, state: str = "GOVERNOR_PAUSED") -> dict:
     value = {
+        "state": state,
         "task": "TASK-013",
         "preferred_agent": "codex",
         "active_agent": None,
@@ -99,6 +100,37 @@ class LegacyGovernorRecoveryTests(unittest.TestCase):
             "last_output": "SUPERVISOR_OUTCOME: HANDOFF\nSUPERVISOR_TARGET_AGENT: claude\nSUPERVISOR_HANDOFF_REASON: provider-specific proof"
         }
         self.assertEqual(structured_handoff_target(supervisor), "claude")
+
+    def test_route_only_recovery_preserves_explicit_handoff_after_package_was_already_unblocked(self) -> None:
+        original = _state("", blocked=False)
+        untouched = copy.deepcopy(original)
+        state, result = recover_state(
+            copy.deepcopy(original),
+            "TASK-013",
+            supervisor=_supervisor(explicit_target="claude", state="GOVERNOR_PAUSED"),
+        )
+        self.assertTrue(result["recovered"])
+        self.assertTrue(result["route_only"])
+        self.assertEqual(result["mode"], "route_only_handoff")
+        self.assertEqual(result["handoff_target"], "claude")
+        self.assertEqual(state, untouched)
+
+    def test_unblocked_package_does_not_invent_alternate_without_explicit_handoff(self) -> None:
+        original = _state("", blocked=False)
+        state, result = recover_state(copy.deepcopy(original), "TASK-013", supervisor=_supervisor())
+        self.assertFalse(result["recovered"])
+        self.assertEqual(result["reason"], "package not blocked")
+        self.assertEqual(state["tasks"]["TASK-013"]["packages"]["1"]["zero_delta_streak"], 2)
+
+    def test_unblocked_explicit_handoff_is_not_replayed_while_supervisor_is_active(self) -> None:
+        original = _state("", blocked=False)
+        state, result = recover_state(
+            copy.deepcopy(original),
+            "TASK-013",
+            supervisor=_supervisor(explicit_target="claude", state="RUNNING_CODEX"),
+        )
+        self.assertFalse(result["recovered"])
+        self.assertEqual(state["tasks"]["TASK-013"]["packages"]["1"]["zero_delta_streak"], 2)
 
     def test_hard_budget_block_is_not_overridden(self) -> None:
         original = _state("package budget reached (8/8) with high-value ratio 0%")
