@@ -57,4 +57,8 @@ returned `Success` with no errors or warnings.
 This proves the initial replicated authority contract compiles and is
 registered/testable. It does not yet prove two-client connection, spawn,
 replication, disconnect, and reconnect, and it cannot satisfy the dedicated
-server build acceptance while the installed engine refuses server targets.
+server build acceptance while the installed engine refuses server targets. A
+fixed `build --target server` rerun after `89cacc6` returned exit code 6 before
+project compilation: `Server targets are not currently supported from this
+engine distribution.` No retry is appropriate without a server-capable UE
+installation.
