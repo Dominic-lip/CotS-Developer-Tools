@@ -334,6 +334,26 @@ class Handler(BaseHTTPRequestHandler):
         except (ConnectionResetError, BrokenPipeError) as error:
             if not self.loopback_disconnect(error):
                 raise
+    def method_not_allowed(self) -> None:
+        # Streamable HTTP MCP transport makes the server-push GET stream and
+        # the DELETE session-termination endpoint optional; the spec requires
+        # a server that does not implement them to answer 405, not silently
+        # drop the connection. Python's BaseHTTPRequestHandler defaults an
+        # unimplemented method to 501, which at least one real MCP client
+        # (Codex's rmcp) treats as a fatal transport error and tears down the
+        # whole server connection instead of just skipping the optional
+        # capability -- so an explicit, spec-correct 405 is required here.
+        body = b""
+        self.send_response(405)
+        self.send_header("Allow", "POST")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
+    def do_GET(self) -> None:
+        self.method_not_allowed()
+    def do_DELETE(self) -> None:
+        self.method_not_allowed()
     def do_POST(self) -> None:
         if self.path != "/mcp": self.reply(404, {"error": "not_found"}); return
         try:
