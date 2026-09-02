@@ -42,3 +42,19 @@ lifecycle. TASK-015 already proved editor and game builds plus smoke. The
 installed UE distribution currently refuses a server target; TASK-101 retains
 the target declaration and records this environmental limitation until a
 server-capable engine is supplied.
+
+## Current implementation evidence
+
+Production commit `89cacc6` adds `ACotSNetworkProbeActor`: a replicated,
+non-movement actor whose server RPC advances `AuthorityEpoch` only when the
+claimed epoch matches authoritative state. It is intentionally a narrow seam,
+not an identity or persistence model. The canonical fixed editor build returned
+UBT `Result: Succeeded`, compiling the probe and
+`CotS.Runtime.NetworkProbe.AuthorityContract`. In a live production native-MCP
+editor session, Automation discovery found that exact test and its one-test run
+returned `Success` with no errors or warnings.
+
+This proves the initial replicated authority contract compiles and is
+registered/testable. It does not yet prove two-client connection, spawn,
+replication, disconnect, and reconnect, and it cannot satisfy the dedicated
+server build acceptance while the installed engine refuses server targets.
