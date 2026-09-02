@@ -7,12 +7,13 @@ is untrusted telemetry: malformed shapes are repaired locally and never allowed
 to crash the autonomous process.
 
 It also consumes a bounded local routing override produced by the 24x7 legacy-
-governor recovery layer. That prevents an explicit/locally selected provider
-handoff from being lost when the parked legacy supervisor is restarted.
+governor recovery layer and exposes the fixed production lifecycle bridge only
+for the explicitly scheduled production bootstrap/roadmap tasks.
 """
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 import traceback
@@ -25,7 +26,38 @@ from CotSLegacyGovernorRecovery import ROUTING_OVERRIDE
 telemetry = DailyTelemetry()
 _original_load_state = base.load_state
 _original_parse = base.parse_compact_context
+_original_scheduled_task_instruction = base.scheduled_task_instruction
 ROUTING_OVERRIDE_MAX_AGE_SECONDS = 6 * 60 * 60
+
+PRODUCTION_ADAPTER_INSTRUCTIONS = r"""
+For TASK-015 and TASK-100 through TASK-115 only, the scheduled task itself is
+explicit authorization to modify C:\Dev\CotS within that task's stated scope.
+Host filesystem/lifecycle/build/Git work against production must go through the
+fixed audited command `python Scripts/CotSProductionLifecycle.py ...`; never
+replace it with arbitrary shell, PowerShell, raw Git mutation, arbitrary Python
+filesystem code, or writes elsewhere under C:\Dev. C:\Dev\Shardlands remains
+read-only. The fixed production lifecycle command is the one additional command
+for which Codex may request sandbox escalation when its workspace sandbox blocks
+the external production root; the configured auto-reviewer remains the approval
+authority. No other shell/filesystem/process escalation is authorized.
+
+For bounded production text changes, write a JSON manifest only under
+`.cots/production-manifests/` in this DeveloperTools workspace and apply it with
+`python Scripts/CotSProductionLifecycle.py apply-manifest <name.json>`. Use the
+adapter's fixed bootstrap/build/smoke/open/close/wait-mcp/git-complete operations
+rather than inventing host commands. Native Unreal MCP may be used after the
+fixed production editor is open and ready. If an adapter operation reports a
+real prerequisite/configuration problem, report that exact structured gate; do
+not retry the unchanged command blindly.
+""".strip()
+
+
+def _production_task(task: object) -> bool:
+    value = str(task or "")
+    if value == "TASK-015":
+        return True
+    match = re.fullmatch(r"TASK-(\d{3})", value)
+    return bool(match and 100 <= int(match.group(1)) <= 115)
 
 
 def _repair_efficiency(value: object) -> dict[str, Any]:
@@ -94,8 +126,6 @@ def apply_routing_override(state: dict[str, Any], override: dict[str, Any], *, n
     result = dict(state)
     result["pending_handoff_target"] = target
     result["active_task_override"] = task
-    # Do not change preferred_agent. The legacy governor explicitly recognises
-    # pending_handoff_target as authority to use the non-preferred provider.
     return result, True
 
 
@@ -173,12 +203,32 @@ def hardened_bounded(value: Any, limit: int = 12) -> Any:
     return str(value)[:600]
 
 
+def hardened_scheduled_task_instruction(task_override: str | None = None) -> str:
+    instruction = _original_scheduled_task_instruction(task_override)
+    task = task_override or base.next_required_task()
+    if _production_task(task):
+        instruction += "\n\n" + PRODUCTION_ADAPTER_INSTRUCTIONS
+    return instruction
+
+
 def install_hardening() -> None:
     base.load_state = hardened_load_state
     base.parse_compact_context = hardened_parse_compact_context
     base.compact_context = hardened_compact_context
     base.merge_compact_context = hardened_merge_compact_context
     base._bounded = hardened_bounded
+    base.scheduled_task_instruction = hardened_scheduled_task_instruction
+
+    if PRODUCTION_ADAPTER_INSTRUCTIONS not in base.CODEX_START:
+        base.CODEX_START = base.CODEX_START + "\n\n" + PRODUCTION_ADAPTER_INSTRUCTIONS
+    if PRODUCTION_ADAPTER_INSTRUCTIONS not in base.CLAUDE_START:
+        base.CLAUDE_START = base.CLAUDE_START + "\n\n" + PRODUCTION_ADAPTER_INSTRUCTIONS
+    base.START_PROMPTS["codex"] = base.CODEX_START
+    base.START_PROMPTS["claude"] = base.CLAUDE_START
+
+    production_tool = " Bash(python Scripts/CotSProductionLifecycle.py *)"
+    if "CotSProductionLifecycle.py" not in base.CLAUDE_ALLOWED_TOOLS:
+        base.CLAUDE_ALLOWED_TOOLS += production_tool
 
 
 def main() -> int:
