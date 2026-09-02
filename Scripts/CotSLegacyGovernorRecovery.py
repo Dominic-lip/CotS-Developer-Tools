@@ -8,14 +8,15 @@ specific *strategy* blocks as locally recoverable: preserve all historical
 metrics, clear only the active retry/blocking streak, then restart the factory
 so the provider gets one fresh strategy opportunity.
 
-A second bounded recovery is allowed when a provider has emitted an explicit
-structured HANDOFF but the legacy duplicate-provider guard subsequently blocks
-the package for observing the same substantive blocker again. In that case the
-handoff is already the changed strategy; the outer watchdog may clear only the
-active block and reassert the persisted handoff target after shutdown.
+Repeated-substantive-block guards are also recoverable when the next retry is
+not blind: either the provider emitted an explicit structured HANDOFF, or a
+second installed/usable provider can be selected locally as the changed
+strategy. The chosen route is persisted in a small local routing override so a
+supervisor restart cannot lose it.
 
-Hard package-budget exhaustion and unknown block reasons are never overridden.
-No AI provider is contacted by this module.
+Hard package-budget exhaustion, infrastructure/protocol failures, unavailable
+alternate providers, and unknown block reasons are never overridden. No AI
+provider is contacted by this module.
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ STATE = COTS / "usage-governor.local.json"
 SUPERVISOR_STATE = COTS / "agent-supervisor.local.json"
 LOCK = COTS / "usage-governor.local.json.lock"
 RECOVERY_STATE = COTS / "legacy-governor-recovery.local.json"
+ROUTING_OVERRIDE = COTS / "legacy-governor-routing.local.json"
 
 RECOVERABLE_REASON_TOKENS = (
     "zero-delta",
@@ -42,13 +44,23 @@ RECOVERABLE_REASON_TOKENS = (
     "changed strategy or human direction required",
 )
 
-# These reasons are only recoverable when the supervisor has a concrete,
-# structured provider handoff. Without that evidence they remain blocked.
+# These reasons are only recoverable when we can route the next turn to a
+# different provider. That makes the retry a changed strategy rather than a
+# third blind attempt by the same provider.
 HANDOFF_BLOCK_TOKENS = (
     "same substantive blocker observed twice",
     "same failed provider attempt observed twice",
     "no third blind retry",
 )
+
+UNUSABLE_PROVIDER_STATUSES = {
+    "NOT_INSTALLED",
+    "USAGE_EXHAUSTED",
+    "AUTH_REQUIRED",
+    "AUTHENTICATION_REQUIRED",
+    "STALLED_PROVIDER",
+    "DISABLED",
+}
 
 
 def _atomic_json(path: Path, value: object) -> None:
@@ -88,12 +100,7 @@ def _active_package(state: dict[str, Any], task_id: str) -> tuple[dict[str, Any]
 
 
 def structured_handoff_target(supervisor: dict[str, Any] | None) -> str | None:
-    """Return an explicitly requested provider handoff, if one is durable.
-
-    Prefer the persisted field. ``last_output`` is a restart-safe fallback for
-    older/local supervisor builds that emitted the marker but failed to retain
-    ``pending_handoff_target`` through their legacy admission path.
-    """
+    """Return an explicitly requested provider handoff, if one is durable."""
     supervisor = supervisor if isinstance(supervisor, dict) else {}
     target = str(supervisor.get("pending_handoff_target") or "").strip().lower()
     if target in {"codex", "claude"}:
@@ -112,6 +119,29 @@ def structured_handoff_target(supervisor: dict[str, Any] | None) -> str | None:
     return None
 
 
+def alternate_provider_target(supervisor: dict[str, Any] | None) -> str | None:
+    """Choose the other locally usable provider for a non-blind retry."""
+    supervisor = supervisor if isinstance(supervisor, dict) else {}
+    current = str(
+        supervisor.get("active_agent")
+        or supervisor.get("preferred_agent")
+        or "codex"
+    ).strip().lower()
+    target = "claude" if current == "codex" else "codex"
+    info = supervisor.get(target)
+    if not isinstance(info, dict):
+        return None
+    status = str(info.get("status") or "UNKNOWN").strip().upper()
+    if status in UNUSABLE_PROVIDER_STATUSES:
+        return None
+    # UNKNOWN is accepted only when the provider has previously been observed
+    # with concrete metadata such as a version/session/reset field. This avoids
+    # inventing an installed alternate from an empty placeholder object.
+    if status == "UNKNOWN" and not any(key in info for key in ("version", "session_id", "thread_id", "reset_at")):
+        return None
+    return target
+
+
 def recover_state(
     state: dict[str, Any],
     task_id: str,
@@ -121,11 +151,10 @@ def recover_state(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return a recovered copy/result while preserving historical counters.
 
-    Strategy/streak blocks are eligible directly. A repeated-substantive-block
-    is eligible only when the supervisor has a structured provider HANDOFF,
-    because the handoff itself supplies the required changed strategy. Package
-    budgets and unknown reasons remain blocked so quota protection cannot be
-    silently bypassed.
+    Strategy/streak blocks are eligible directly. A repeated-substantive block
+    is eligible only when the next turn can be routed to another provider,
+    either by explicit HANDOFF or by a locally observed usable alternate.
+    Package budgets and unknown reasons remain blocked.
     """
     package, package_id = _active_package(state, task_id)
     if package is None:
@@ -134,11 +163,13 @@ def recover_state(
     blocked = bool(package.get("blocked"))
     reason = str(package.get("blocked_reason") or "").strip()
     lower = reason.lower()
-    handoff_target = structured_handoff_target(supervisor)
+    explicit_target = structured_handoff_target(supervisor)
+    fallback_target = alternate_provider_target(supervisor) if explicit_target is None else None
+    route_target = explicit_target or fallback_target
     strategy_recoverable = blocked and any(token in lower for token in RECOVERABLE_REASON_TOKENS)
     handoff_recoverable = (
         blocked
-        and handoff_target is not None
+        and route_target is not None
         and any(token in lower for token in HANDOFF_BLOCK_TOKENS)
     )
     recoverable = strategy_recoverable or handoff_recoverable
@@ -148,11 +179,14 @@ def recover_state(
             "reason": reason or ("package not blocked" if not blocked else "non-recoverable legacy governor block"),
             "task": task_id,
             "package": package_id,
-            "handoff_target": handoff_target,
+            "handoff_target": route_target,
         }
 
     now = time.time()
-    mode = "structured_handoff" if handoff_recoverable and not strategy_recoverable else "strategy_streak"
+    if handoff_recoverable and not strategy_recoverable:
+        mode = "structured_handoff" if explicit_target else "alternate_provider"
+    else:
+        mode = "strategy_streak"
     before = {
         "blocked_reason": reason,
         "zero_delta_streak": int(package.get("zero_delta_streak") or 0),
@@ -170,7 +204,7 @@ def recover_state(
         "at": now,
         "source": source,
         "mode": mode,
-        "handoff_target": handoff_target,
+        "handoff_target": route_target,
         "reason": "cleared only active legacy block; historical productivity totals preserved",
         "previous": before,
     }
@@ -185,7 +219,7 @@ def recover_state(
         "package": package_id,
         "source": source,
         "mode": mode,
-        "handoff_target": handoff_target,
+        "handoff_target": route_target,
         "previous": before,
     })
     state["autonomous_recovery_history"] = history[-50:]
@@ -196,7 +230,7 @@ def recover_state(
         "task": task_id,
         "package": package_id,
         "mode": mode,
-        "handoff_target": handoff_target,
+        "handoff_target": route_target,
         "previous_reason": reason,
         "previous_zero_delta_streak": before["zero_delta_streak"],
         "previous_low_delta_streak": before["low_delta_streak"],
@@ -204,7 +238,7 @@ def recover_state(
 
 
 def recover_persisted(task_id: str, *, source: str = "24x7-watchdog") -> dict[str, Any]:
-    """Recover the persisted active package using a short inter-process lock."""
+    """Recover persisted state using a short inter-process lock."""
     COTS.mkdir(parents=True, exist_ok=True)
     LOCK.touch(exist_ok=True)
     if LOCK.stat().st_size == 0:
@@ -234,6 +268,17 @@ def recover_persisted(task_id: str, *, source: str = "24x7-watchdog") -> dict[st
             state, result = recover_state(state, task_id, source=source, supervisor=supervisor)
             if result.get("recovered"):
                 _atomic_json(STATE, state)
+                target = result.get("handoff_target")
+                if target in {"codex", "claude"}:
+                    _atomic_json(ROUTING_OVERRIDE, {
+                        "task": task_id,
+                        "target": target,
+                        "at": time.time(),
+                        "source": source,
+                        "mode": result.get("mode"),
+                        "baseline_turn_count": int(supervisor.get("turn_count") or 0),
+                        "previous_reason": result.get("previous_reason"),
+                    })
                 _atomic_json(RECOVERY_STATE, {**result, "at": time.time()})
             return result
         finally:
