@@ -38,6 +38,15 @@ class ProductionLifecycleTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(lifecycle.Refused):
                 lifecycle._safe_relpath(value)
 
+    def test_completion_allows_only_the_fixed_task015_binary_map(self):
+        lifecycle.PRODUCTION.mkdir(parents=True)
+        entry_map = lifecycle.PRODUCTION / "Content" / "Maps" / "CotS_Entry.umap"
+        entry_map.parent.mkdir(parents=True)
+        entry_map.write_bytes(b"map")
+        self.assertEqual(lifecycle._safe_completion_path("Content/Maps/CotS_Entry.umap"), entry_map.resolve())
+        with self.assertRaises(lifecycle.Refused):
+            lifecycle._safe_completion_path("Content/Maps/Other.umap")
+
     def test_bootstrap_creates_fixed_minimal_project_without_git_side_effect(self):
         result = lifecycle.bootstrap(initialize_git=False)
         self.assertTrue(result["success"])

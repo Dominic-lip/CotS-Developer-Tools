@@ -20,7 +20,7 @@
     {"id":"TASK-012","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-012_CLAUDE_AUTONOMOUS_PROOF.md: independent Claude Blueprint/map/PIE autonomous proof matching Codex's existing proof"]},
     {"id":"TASK-013","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-013_LOCOMOTION_CONTENT_PREREQUISITE.md: canonical UE 5.8 build, native-MCP Mannequin-to-distinct-MetaHuman IK Rig/Retargeter creation and batch-retarget output proof, independent output-skeleton inspection, and 13/13 CotS automation pass"]},
     {"id":"TASK-014","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-014_SHARDLANDS_DONOR_AUDIT.md: classified donor inventory with dependencies and confidence"]},
-    {"id":"TASK-015","status":"PARTIAL","evidence":["Docs/Validation/TASK-015_PRODUCTION_BOOTSTRAP.md: production tree, local Git baseline, canonical editor build, and live native-MCP endpoint are verified; non-blocking entry-map creation and smoke evidence remain"]},
+    {"id":"TASK-015","status":"PARTIAL","evidence":["Docs/Validation/TASK-015_PRODUCTION_BOOTSTRAP.md: production baseline, canonical editor build, native MCP, and saved /Game/Maps/CotS_Entry are verified; fixed smoke loaded the map but exited 1 on an MCP port collision"]},
     {"id":"TASK-016","status":"PARTIAL"},
     {"id":"TASK-100","status":"NOT_STARTED"},
     {"id":"TASK-101","status":"NOT_STARTED"},

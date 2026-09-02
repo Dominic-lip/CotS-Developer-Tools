@@ -42,14 +42,20 @@ diagnostics confirmed the registered Scene, Asset, EditorApp, Programmatic,
 and Slate Inspector toolsets. Production commit `f90da9c` records those exact
 configuration files; fixed status afterwards reported a clean worktree.
 
-No direct native tool creates a level asset: Scene tools only load or operate
-on existing levels, and Asset tools only save existing assets. The registered
-Slate Inspector exposed the File menu's `New Level...` command, but invoking
-that UI command through the fixed bridge timed out and blocked subsequent MCP
-requests while the editor remained live. The fixed `close` operation then
-closed the tracked editor cleanly. No `/Game/Maps/CotS_Entry` asset was
-created, and no fixed smoke pass was recorded.
+No direct registered native tool creates a level asset: Scene tools only load
+or operate on existing levels, and Asset tools only save existing assets. The
+registered Slate Inspector's `New Level...` action blocks the MCP request
+thread, so the bridge added one audited `create-entry-map` operation. It runs
+only an exact manifest-provisioned Python commandlet script using UE 5.8's
+`LevelEditorSubsystem.new_level`; that commandlet returned exit code 0 and
+created/saved `/Game/Maps/CotS_Entry`. A later editor open/wait-MCP session
+used native Asset and Scene tools to confirm the asset exists and load the
+same object path. Production commit `d6557e6` records the map, fixed scripts,
+and required `GameFeatureData` asset-manager rule.
 
-TASK-015 therefore remains `PARTIAL`. It needs a fixed, non-blocking
-production `create-entry-map` operation (or a native direct level-creation
-tool), then one create/save, editor/MCP inspection, and fixed smoke proof.
+The fixed smoke script also loaded `/Game/Maps/CotS_Entry`, but its commandlet
+returned exit code 1 because the auto-start MCP listener could not bind port
+8000. This is a real lifecycle failure even though the smoke script itself
+completed. TASK-015 remains `PARTIAL` until a fixed commandlet-safe MCP
+listener configuration avoids that port collision and `smoke` returns exit
+code 0.

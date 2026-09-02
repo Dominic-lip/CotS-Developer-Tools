@@ -39,8 +39,30 @@ ALLOWED_TASKS = {"TASK-015", *(f"TASK-{n}" for n in range(100, 116))}
 ALLOWED_TEXT_SUFFIXES = {
     ".h", ".hpp", ".cpp", ".c", ".cs", ".ini", ".json", ".md", ".txt",
     ".uproject", ".uplugin", ".xml", ".yml", ".yaml", ".toml", ".cfg",
-    ".bat", ".cmd", ".ps1", ".gitignore",
+    ".bat", ".cmd", ".ps1", ".py", ".gitignore",
 }
+ENTRY_MAP_SCRIPT_PATH = "Content/Python/TASK_015_create_entry_map.py"
+ENTRY_MAP_SCRIPT = (
+    "import unreal\n\n"
+    "ENTRY_MAP = '/Game/Maps/CotS_Entry'\n"
+    "level_editor = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+    "if not unreal.EditorAssetLibrary.does_asset_exist(ENTRY_MAP):\n"
+    "    if not level_editor.new_level(ENTRY_MAP):\n"
+    "        raise RuntimeError(f'Unable to create {ENTRY_MAP}')\n"
+    "if not unreal.EditorAssetLibrary.does_asset_exist(ENTRY_MAP):\n"
+    "    raise RuntimeError(f'{ENTRY_MAP} was not saved')\n"
+    "unreal.log(f'TASK-015 entry map ready: {ENTRY_MAP}')\n"
+)
+ENTRY_MAP_SMOKE_SCRIPT_PATH = "Content/Python/TASK_015_smoke_entry_map.py"
+ENTRY_MAP_SMOKE_SCRIPT = (
+    "import unreal\n\n"
+    "ENTRY_MAP = '/Game/Maps/CotS_Entry'\n"
+    "if not unreal.EditorAssetLibrary.does_asset_exist(ENTRY_MAP):\n"
+    "    raise RuntimeError(f'Missing {ENTRY_MAP}')\n"
+    "if not unreal.EditorLevelLibrary.load_level(ENTRY_MAP):\n"
+    "    raise RuntimeError(f'Unable to load {ENTRY_MAP}')\n"
+    "unreal.log(f'TASK-015 smoke loaded: {ENTRY_MAP}')\n"
+)
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
 
@@ -112,6 +134,14 @@ def _safe_relpath(value: str) -> Path:
     if suffix not in ALLOWED_TEXT_SUFFIXES:
         raise Refused(f"unsupported production text file type: {candidate.name}")
     return candidate
+
+
+def _safe_completion_path(value: str) -> Path:
+    """Permit the one binary asset created by TASK-015's fixed map operation."""
+    normalized = str(value or "").replace("\\", "/")
+    if normalized == "Content/Maps/CotS_Entry.umap":
+        return (PRODUCTION / normalized).resolve()
+    return _safe_relpath(value)
 
 
 def _run(command: list[str], *, cwd: Path, timeout: int = 900, creationflags: int = 0) -> dict[str, Any]:
@@ -681,6 +711,42 @@ def mcp_slate_open_new_level_dialog() -> dict[str, Any]:
         connection.close()
 
 
+def mcp_inspect_entry_map() -> dict[str, Any]:
+    """Inspect and load only TASK-015's canonical entry map through native MCP."""
+    if not _mcp_ready():
+        return {"success": False, "error": "production_unreal_mcp_not_ready"}
+    connection = http.client.HTTPConnection(MCP_HOST, MCP_PORT, timeout=8)
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    try:
+        initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "CotS Production Lifecycle", "version": "1.0"}}}
+        connection.request("POST", "/mcp", body=json.dumps(initialize), headers=headers)
+        response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8")); session_id = response.getheader("Mcp-Session-Id")
+        if response.status != 200 or not session_id:
+            return {"success": False, "error": "production_unreal_mcp_initialize_failed"}
+        session_headers = {**headers, "Mcp-Session-Id": session_id, "Mcp-Protocol-Version": payload.get("result", {}).get("protocolVersion", "2025-11-25")}
+        connection.request("POST", "/mcp", body=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}), headers=session_headers)
+        initialized = connection.getresponse(); initialized.read()
+        if initialized.status not in (200, 202):
+            return {"success": False, "error": "production_unreal_mcp_initialized_notification_failed"}
+        calls = (
+            ("editor_toolset.toolsets.asset.AssetTools", "exists", {"path": "/Game/Maps/CotS_Entry"}),
+            ("editor_toolset.toolsets.scene.SceneTools", "load_level", {"level_path": "/Game/Maps/CotS_Entry"}),
+            ("editor_toolset.toolsets.scene.SceneTools", "get_current_level", {}),
+        )
+        results: list[str] = []
+        for request_id, (toolset_name, tool_name, arguments) in enumerate(calls, start=2):
+            request = {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": {"name": "call_tool", "arguments": {"toolset_name": toolset_name, "tool_name": tool_name, "arguments": arguments}}}
+            connection.request("POST", "/mcp", body=json.dumps(request), headers=session_headers)
+            response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8"))
+            if response.status != 200 or "error" in payload:
+                return {"success": False, "error": "production_unreal_mcp_entry_map_inspection_failed", "tool": tool_name, "transport": payload}
+            content = payload.get("result", {}).get("content", [])
+            results.append(content[0].get("text", "") if content and isinstance(content[0], dict) else "")
+        return {"success": results[0] == '{"returnValue":true}' and "/Game/Maps/CotS_Entry" in results[2], "entry_map_exists": results[0], "loaded_level": results[2]}
+    finally:
+        connection.close()
+
+
 def open_editor() -> dict[str, Any]:
     info = status()
     if info["editor_running"]:
@@ -753,15 +819,40 @@ def build(target: str = "editor", timeout_seconds: int = 1800) -> dict[str, Any]
 
 
 def smoke(timeout_seconds: int = 300) -> dict[str, Any]:
-    if not PROJECT.is_file() or not EDITOR_CMD.is_file():
-        raise Refused("production project or UnrealEditor-Cmd is missing")
+    script = _safe_relpath(ENTRY_MAP_SMOKE_SCRIPT_PATH)
+    if not PROJECT.is_file() or not EDITOR_CMD.is_file() or not script.is_file():
+        raise Refused("production project, UnrealEditor-Cmd, or fixed smoke script is missing")
+    if script.read_text(encoding="utf-8") != ENTRY_MAP_SMOKE_SCRIPT:
+        raise Refused("fixed smoke script content does not match the audited TASK-015 operation")
     command = [
-        str(EDITOR_CMD), str(PROJECT), "-unattended", "-nop4", "-nosplash",
-        "-NullRHI", "-NoSound", "-ExecCmds=Quit",
+        str(EDITOR_CMD), str(PROJECT), "-run=PythonScriptCommandlet", f"-Script={script}",
+        "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound",
     ]
     result = _run(command, cwd=PRODUCTION, timeout=max(30, min(1200, int(timeout_seconds))), creationflags=NEW_PROCESS_GROUP)
     _write_state(last_operation="smoke", smoke_exit_code=result["exit_code"])
     return {"success": result["exit_code"] == 0, **result}
+
+
+def create_entry_map(timeout_seconds: int = 300) -> dict[str, Any]:
+    """Create only TASK-015's canonical entry map through UE's Python commandlet."""
+    info = status()
+    if info.get("editor_running"):
+        raise Refused("close the production editor before creating the entry map")
+    script = _safe_relpath(ENTRY_MAP_SCRIPT_PATH)
+    if not PROJECT.is_file() or not EDITOR_CMD.is_file() or not script.is_file():
+        raise Refused("production project, UnrealEditor-Cmd, or fixed entry-map script is missing")
+    if script.read_text(encoding="utf-8") != ENTRY_MAP_SCRIPT:
+        raise Refused("fixed entry-map script content does not match the audited TASK-015 operation")
+    result = _run(
+        [str(EDITOR_CMD), str(PROJECT), "-run=PythonScriptCommandlet", f"-Script={script}", "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound"],
+        cwd=PRODUCTION,
+        timeout=max(30, min(1200, int(timeout_seconds))),
+        creationflags=NEW_PROCESS_GROUP,
+    )
+    entry_map = PRODUCTION / "Content" / "Maps" / "CotS_Entry.umap"
+    verified = result["exit_code"] == 0 and entry_map.is_file()
+    _write_state(last_operation="create-entry-map", entry_map_exists=entry_map.is_file(), entry_map_exit_code=result["exit_code"])
+    return {"success": verified, "entry_map": "/Game/Maps/CotS_Entry", "entry_map_exists": entry_map.is_file(), **result}
 
 
 def git_complete(message: str, files: list[str], *, push: bool = False) -> dict[str, Any]:
@@ -772,7 +863,7 @@ def git_complete(message: str, files: list[str], *, push: bool = False) -> dict[
         raise Refused("commit message must be 1..180 characters")
     requested: list[str] = []
     for value in files:
-        target = _safe_relpath(value)
+        target = _safe_completion_path(value)
         if not target.exists():
             raise Refused(f"cannot stage missing file: {value}")
         requested.append(target.relative_to(PRODUCTION.resolve()).as_posix())
@@ -820,10 +911,12 @@ def main() -> int:
     sub.add_parser("mcp-slate-open-file-menu")
     sub.add_parser("mcp-slate-inspect-file-menu")
     sub.add_parser("mcp-slate-open-new-level-dialog")
+    sub.add_parser("mcp-inspect-entry-map")
     sub.add_parser("bootstrap")
     manifest = sub.add_parser("apply-manifest"); manifest.add_argument("manifest")
     build_parser = sub.add_parser("build"); build_parser.add_argument("--target", choices=("editor", "game", "server"), default="editor"); build_parser.add_argument("--timeout", type=int, default=1800)
     smoke_parser = sub.add_parser("smoke"); smoke_parser.add_argument("--timeout", type=int, default=300)
+    map_parser = sub.add_parser("create-entry-map"); map_parser.add_argument("--timeout", type=int, default=300)
     sub.add_parser("open")
     close_parser = sub.add_parser("close"); close_parser.add_argument("--timeout", type=int, default=45)
     wait_parser = sub.add_parser("wait-mcp"); wait_parser.add_argument("--timeout", type=int, default=90)
@@ -840,10 +933,12 @@ def main() -> int:
         elif args.operation == "mcp-slate-open-file-menu": value = mcp_slate_open_file_menu()
         elif args.operation == "mcp-slate-inspect-file-menu": value = mcp_slate_inspect_file_menu()
         elif args.operation == "mcp-slate-open-new-level-dialog": value = mcp_slate_open_new_level_dialog()
+        elif args.operation == "mcp-inspect-entry-map": value = mcp_inspect_entry_map()
         elif args.operation == "bootstrap": value = bootstrap()
         elif args.operation == "apply-manifest": value = apply_manifest(args.manifest)
         elif args.operation == "build": value = build(args.target, args.timeout)
         elif args.operation == "smoke": value = smoke(args.timeout)
+        elif args.operation == "create-entry-map": value = create_entry_map(args.timeout)
         elif args.operation == "open": value = open_editor()
         elif args.operation == "close": value = close_editor(args.timeout)
         elif args.operation == "wait-mcp": value = wait_mcp(args.timeout)
