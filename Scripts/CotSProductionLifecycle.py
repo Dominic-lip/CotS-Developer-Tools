@@ -59,7 +59,8 @@ ENTRY_MAP_SMOKE_SCRIPT = (
     "ENTRY_MAP = '/Game/Maps/CotS_Entry'\n"
     "if not unreal.EditorAssetLibrary.does_asset_exist(ENTRY_MAP):\n"
     "    raise RuntimeError(f'Missing {ENTRY_MAP}')\n"
-    "if not unreal.EditorLevelLibrary.load_level(ENTRY_MAP):\n"
+    "level_editor = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+    "if not level_editor.load_level(ENTRY_MAP):\n"
     "    raise RuntimeError(f'Unable to load {ENTRY_MAP}')\n"
     "unreal.log(f'TASK-015 smoke loaded: {ENTRY_MAP}')\n"
 )
@@ -826,6 +827,7 @@ def smoke(timeout_seconds: int = 300) -> dict[str, Any]:
         raise Refused("fixed smoke script content does not match the audited TASK-015 operation")
     command = [
         str(EDITOR_CMD), str(PROJECT), "-run=PythonScriptCommandlet", f"-Script={script}",
+        "-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False",
         "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound",
     ]
     result = _run(command, cwd=PRODUCTION, timeout=max(30, min(1200, int(timeout_seconds))), creationflags=NEW_PROCESS_GROUP)

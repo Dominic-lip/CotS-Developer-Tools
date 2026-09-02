@@ -53,9 +53,10 @@ used native Asset and Scene tools to confirm the asset exists and load the
 same object path. Production commit `d6557e6` records the map, fixed scripts,
 and required `GameFeatureData` asset-manager rule.
 
-The fixed smoke script also loaded `/Game/Maps/CotS_Entry`, but its commandlet
-returned exit code 1 because the auto-start MCP listener could not bind port
-8000. This is a real lifecycle failure even though the smoke script itself
-completed. TASK-015 remains `PARTIAL` until a fixed commandlet-safe MCP
-listener configuration avoids that port collision and `smoke` returns exit
-code 0.
+The fixed `smoke` operation now supplies an audited per-commandlet
+`-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False`
+override. This keeps the normal editor's native MCP endpoint enabled while
+preventing the transient commandlet from binding port 8000. The fixed smoke
+commandlet ran once with exit code 0; its Python script loaded
+`/Game/Maps/CotS_Entry` and Unreal reported `Success - 0 error(s), 0
+warning(s)`. TASK-015 is therefore `COMPLETE_VERIFIED`.

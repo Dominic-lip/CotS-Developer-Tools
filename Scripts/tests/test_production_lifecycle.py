@@ -47,6 +47,13 @@ class ProductionLifecycleTests(unittest.TestCase):
         with self.assertRaises(lifecycle.Refused):
             lifecycle._safe_completion_path("Content/Maps/Other.umap")
 
+    def test_task015_smoke_is_fixed_and_disables_mcp_only_for_the_commandlet(self):
+        self.assertIn("LevelEditorSubsystem", lifecycle.ENTRY_MAP_SMOKE_SCRIPT)
+        self.assertTrue(any(
+            isinstance(value, str) and "bAutoStartServer=False" in value
+            for value in lifecycle.smoke.__code__.co_consts
+        ))
+
     def test_bootstrap_creates_fixed_minimal_project_without_git_side_effect(self):
         result = lifecycle.bootstrap(initialize_git=False)
         self.assertTrue(result["success"])
