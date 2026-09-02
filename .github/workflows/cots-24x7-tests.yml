@@ -39,6 +39,7 @@ jobs:
           Scripts/CotSCodexQuotaProbe.py
           Scripts/CotSProductivityGovernor.py
           Scripts/CotSLegacyGovernorRecovery.py
+          Scripts/CotSProcessLiveness.py
           Scripts/CotSHardwareTelemetry.py
           Scripts/CotSLocalAI.py
           Scripts/CotSRollbackGuard.py
@@ -48,4 +49,4 @@ jobs:
           Scripts/CotSLiveChaosMaintenance.py
       - name: Run 24x7 regression tests
         shell: pwsh
-        run: python -m unittest Scripts.tests.test_cots_24x7 Scripts.tests.test_cots_24x7_enhanced Scripts.tests.test_legacy_governor_recovery -v
+        run: python -m unittest Scripts.tests.test_cots_24x7 Scripts.tests.test_cots_24x7_enhanced Scripts.tests.test_legacy_governor_recovery Scripts.tests.test_process_liveness -v
