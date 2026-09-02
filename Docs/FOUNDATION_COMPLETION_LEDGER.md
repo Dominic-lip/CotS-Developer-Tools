@@ -1,7 +1,8 @@
 # Foundation Completion Ledger
 
-Reconciled: 2026-08-30. This is the authority for TASK-000 through TASK-016;
-the machine-readable scheduler input is `Docs/FOUNDATION_COMPLETION_STATE.json`.
+Reconciled: 2026-09-02. This is the authority for foundation tasks and the
+production roadmap's evidence-backed task state; the machine-readable scheduler
+input is `Docs/FOUNDATION_COMPLETION_STATE.json`.
 `COMPLETE_VERIFIED` means the stated acceptance evidence is committed and
 inspectable. `COMPLETE_BUT_EVIDENCE_MISSING` preserves the implementation but
 blocks advancement until the missing acceptance evidence is recorded. `PARTIAL`
@@ -30,8 +31,9 @@ file, an agent's outcome marker, or a later task number.
 | TASK-014 | COMPLETE_VERIFIED | Classified Shardlands inventory with dependencies and confidence. | Read-only UE 5.8 donor inventory of modules, plugins, config, C++, content/map roots and canonical data pipeline. | `Docs/Validation/TASK-014_SHARDLANDS_DONOR_AUDIT.md` classifies character/MetaHuman, animation, inventory, interaction, combat, world, UI, maps/experiments, development tools and canonical data as direct migration, cleanup, rebuild or retain-in-donor; it records dependencies and confidence. | No donor or CotS mutation performed. |
 | TASK-015 | COMPLETE_VERIFIED | Clean UE 5.8 production project/baseline with client/editor build and bootstrap architecture. | `fb6c12c`, `821bfe6`, `f90da9c`, and `d6557e6` in `C:\Dev\CotS`: fixed bootstrap, native-MCP configuration, a GameFeatureData rule, and saved `/Game/Maps/CotS_Entry`. The bridge has bounded map-creation, map-inspection, and smoke commandlet operations. | `Docs/Validation/TASK-015_PRODUCTION_BOOTSTRAP.md` records editor UBT success, game build success, server-target refusal, native MCP readiness, direct native map inspection/load, map creation commandlet exit 0, graceful close, and the fixed smoke commandlet's exit-0 map-load proof. | None. The smoke applies a per-commandlet MCP auto-start override so its transient editor never collides with the normal editor's port-8000 listener. |
 | TASK-016 | COMPLETE_VERIFIED | Both adapters, in one session, use Host + native Unreal MCP and prove lock contention/read-only connectivity. | `4748427`, `585dfee`, `04b3819`; symmetric endpoint wiring; `5d1c8c0` fixes Host MCP's GET/DELETE 405 (was a fatal 501 to Codex's rmcp transport). | `Docs/Validation/TASK-016_CLAUDE_ADAPTER_PROOF.md` records both adapters' independent, same-session proofs against the same running `CotSToolLab` editor (`editor_pid 52020`): Host MCP connect/lock acquire-release, native Unreal MCP connect with matching project/engine identity, native and CotS toolset enumeration, one read-only inspection call through each server, and the single-mutating-agent lease rejecting each standby identity's Host MCP mutation attempt while its read-only status calls stayed unaffected. | None. |
+| TASK-100 | COMPLETE_VERIFIED | Reconcile the production baseline and establish a shallow existing-work index across production, Shardlands, Website, Platform API and developer tooling. | `Docs/Production/EXISTING_WORK_INDEX.md` records production at `8e744c7`, local Shardlands at `64f5ca4` with its dirty/freshness caveat, task routing, and unavailable peer-repository caveats. | TASK-015's durable canonical editor/game build, native MCP, entry-map and smoke evidence remains valid; fixed production status confirms a clean production worktree. | None. Later tasks must perform their specified just-in-time donor and peer-contract inspection. |
 
 `SUPERSEDED` is not used: every original foundation task remains a dependency
 or a preserved capability. Production TASK-100 through TASK-115 are present in
-the machine-readable state as `NOT_STARTED` so a verified foundation cannot be
-mistaken for a completed roadmap.
+the machine-readable state so their independently verified completion cannot be
+mistaken for roadmap-wide completion.
