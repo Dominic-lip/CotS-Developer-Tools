@@ -2,10 +2,11 @@
 """Safe chaos/regression runner for the CotS 24x7 control plane.
 
 This runner never disables the real network and never kills an unrelated live
-process.  It executes deterministic simulations for child-process death,
-malformed provider output, quota exhaustion, watchdog restart semantics and
-local hardware/governor gates.  Live destructive chaos can be added later only
-behind an explicit maintenance-mode boundary.
+process. It executes deterministic simulations for child-process death,
+malformed provider output, quota exhaustion, watchdog restart semantics, local
+hardware/governor gates, identical-gate circuit breaking, and the fixed
+production lifecycle boundary. Live destructive chaos remains behind an
+explicit maintenance-mode boundary.
 """
 from __future__ import annotations
 
@@ -22,6 +23,8 @@ RESULT = COTS / "chaos-last-result.local.json"
 TESTS = (
     "Scripts.tests.test_cots_24x7",
     "Scripts.tests.test_cots_24x7_enhanced",
+    "Scripts.tests.test_loop_guard",
+    "Scripts.tests.test_production_lifecycle",
 )
 
 
@@ -36,6 +39,7 @@ def run() -> dict:
             "provider malformed telemetry", "provider quota/reset parsing", "four-turn productivity trip",
             "hardware safety gates", "child-process death classification", "local telemetry survival",
             "rollback canary primitives", "watchdog false-human-gate recovery",
+            "identical-gate cross-generation circuit breaker", "fixed production lifecycle boundary",
         ],
         "live_network_disruption": False, "unrelated_process_kills": False,
     }
