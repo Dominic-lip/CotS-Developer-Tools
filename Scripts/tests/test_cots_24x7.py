@@ -43,6 +43,26 @@ class TestProviderContextHardening(unittest.TestCase):
         self.assertIsInstance(value["read_fingerprints"], list)
         self.assertEqual(value["task_id"], "TASK-013")
 
+    def test_task016_missing_claude_client_gate_becomes_handoff(self):
+        text = """SUPERVISOR_OUTCOME: RECOVERABLE_GATE
+SUPERVISOR_GATE_CATEGORY: RECOVERABLE_PROVIDER
+SUPERVISOR_GATE_REASON: The active App Server capability set contains no Claude adapter or Claude MCP client.
+SUPERVISOR_RECOMMENDED_ACTION: Rotate to or expose the Claude adapter.
+"""
+        kind, detail = hardened.hardened_turn_outcome(text)
+        self.assertEqual(kind, "HANDOFF")
+        self.assertTrue(detail.startswith("claude:"))
+
+    def test_unrelated_recoverable_gate_is_not_rewritten(self):
+        text = """SUPERVISOR_OUTCOME: RECOVERABLE_GATE
+SUPERVISOR_GATE_CATEGORY: RECOVERABLE_BUILD_TEST
+SUPERVISOR_GATE_REASON: Canonical build failed.
+SUPERVISOR_RECOMMENDED_ACTION: Inspect the bounded build failure.
+"""
+        kind, detail = hardened.hardened_turn_outcome(text)
+        self.assertEqual(kind, "RECOVERABLE_GATE")
+        self.assertIn("RECOVERABLE_BUILD_TEST", detail)
+
 
 class TestProgressAndQuotaGuard(unittest.TestCase):
     def test_commit_or_turn_is_meaningful_progress(self):
