@@ -4,6 +4,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 if str(SCRIPTS) not in sys.path:
@@ -32,6 +33,30 @@ class ProcessLivenessTests(unittest.TestCase):
 
         self.assertIs(final.enhanced.pid_live, process_live)
         self.assertFalse(final.enhanced.pid_live(0xFFFFFFFF))
+
+    def test_tailscale_auto_serve_uses_only_private_local_telemetry_target(self) -> None:
+        import CotSControlCenter24x7Final as final
+
+        completed = mock.Mock(returncode=0, stdout="ok", stderr="")
+        with mock.patch.object(final, "tailscale_executable", return_value=r"C:\Program Files\Tailscale\tailscale.exe"), \
+             mock.patch.object(final.subprocess, "run", side_effect=[completed, completed]) as run:
+            result = final.ensure_tailscale_serve()
+
+        self.assertTrue(result["success"])
+        self.assertEqual(final.TAILSCALE_TARGET, "http://127.0.0.1:8765")
+        self.assertEqual(run.call_args_list[0].args[0][1:], ["status"])
+        self.assertEqual(
+            run.call_args_list[1].args[0][1:],
+            ["serve", "--bg", "http://127.0.0.1:8765"],
+        )
+
+    def test_missing_tailscale_never_blocks_control_center_startup(self) -> None:
+        import CotSControlCenter24x7Final as final
+
+        with mock.patch.object(final, "tailscale_executable", return_value=None):
+            result = final.ensure_tailscale_serve()
+        self.assertFalse(result["success"])
+        self.assertEqual(result["state"], "not_installed")
 
 
 if __name__ == "__main__":
