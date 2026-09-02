@@ -11,6 +11,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
 
 import CotSLoopGuard as loop
+import CotSWatchdog24x7Final as final_watchdog
 
 
 class LoopGuardTests(unittest.TestCase):
@@ -96,6 +97,30 @@ class LoopGuardTests(unittest.TestCase):
         changed = self.evidence(head="new")
         with mock.patch.object(loop, "durable_evidence", return_value=changed), mock.patch.object(loop, "gate_descriptor", return_value=loop.gate_descriptor(self.gate())):
             self.assertTrue(guard.condition_changed(self.gate()))
+
+    def test_task101_server_engine_gate_is_hard_prerequisite(self):
+        decision = {
+            "blocked_kind": "repeated_gate",
+            "gate": {
+                "category": "RECOVERABLE_UNREAL_LIFECYCLE",
+                "reason": "UE all-platform SDK validation fails before worker discovery, and the same engine distribution does not support Server targets.",
+                "task": "TASK-101",
+                "phase": "networked-automation-engine-gate",
+            },
+        }
+        self.assertTrue(final_watchdog.hard_prerequisite_gate(decision))
+
+    def test_run_resume_cannot_force_hard_prerequisite_but_restart_can(self):
+        decision = {
+            "blocked_kind": "repeated_gate",
+            "gate": {
+                "category": "RECOVERABLE_UNREAL_LIFECYCLE",
+                "reason": "No server-capable UE installation or SDK metadata repair has been exposed.",
+                "task": "TASK-101",
+            },
+        }
+        self.assertFalse(final_watchdog.operator_override_allowed(decision, "resume"))
+        self.assertTrue(final_watchdog.operator_override_allowed(decision, "restart"))
 
 
 if __name__ == "__main__":
