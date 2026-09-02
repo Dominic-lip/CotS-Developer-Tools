@@ -88,3 +88,27 @@ with `mcp_ready: true`. Codex's independent proof (Host + native Unreal MCP,
 toolset enumeration, lock contention as observed from Codex's side) remains to
 be recorded in this same file or a companion `TASK-016_CODEX_ADAPTER_PROOF.md`
 before the ledger can move TASK-016 to `COMPLETE_VERIFIED`.
+
+## Codex — independent Host and native Unreal MCP proof
+
+Date: 2026-09-02. With ToolLab deliberately left open by the Claude turn,
+the active Codex App Server adapter connected to both configured endpoints in
+one session without reconfiguration:
+
+1. `GetToolLabStatus` through CotS Host MCP returned
+   `editor_running: true`, `editor_pid: 52020`, `mcp_ready: true`, and no
+   lock owner.
+2. Native `list_toolsets` enumerated the native registry plus all CotS
+   toolsets, including `CotSFoundationToolset`, `CotSInspectionToolset`,
+   `CotSMutationToolset`, and `CotSLifecycleToolset`.
+3. Native `describe_toolset(CotSFoundationToolset)` followed by the read-only
+   `GetStatus` call returned `plugin: CotSDeveloperTools`, version `0.2.0`,
+   and UE `5.8.1-56057345+++UE5+Release-5.8`.
+4. Codex acquired Host lock `codex-task-016-owner`; a distinct
+   `codex-task-016-standby` acquire request was refused with
+   `mutation_lock_held` and reported the owner. Codex then released the owner
+   lock successfully.
+
+This is Codex's complete independent connectivity/toolset/read-only/Host-lock
+proof. ToolLab remains running and MCP-ready with no owner for Claude's fresh
+native-MCP turn.
