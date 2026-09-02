@@ -8,7 +8,7 @@ The expected local workspace is:
 
 - `C:\Dev\Shardlands` — legacy donor/reference project. Treat as READ-ONLY unless a task explicitly authorizes a write.
 - `C:\Dev\CotSDeveloperTools` — this repository. Shared tooling, task specifications, migration/reuse evidence and autonomous orchestration belong here.
-- `C:\Dev\CotS` — clean production game. Production tasks `TASK-100+` may modify it only within their explicit scope.
+- `C:\Dev\CotS` — clean production game. `TASK-015` is explicitly authorized to create/bootstrap this tree only within its production-bootstrap scope and only through the fixed `Scripts\CotSProductionLifecycle.py` host bridge. Production tasks `TASK-100` through `TASK-115` may modify it only within their explicit scope, using the same fixed bridge for host lifecycle/build/Git operations.
 - `C:\Dev\Tasks` — optional external task specifications.
 
 Known additional read/reference sources include the GitHub repositories `Dominic-lip/Shardlands`, `Dominic-lip/CotS-Website`, `Dominic-lip/CotS-Platform-API`, and `Dominic-lip/CotS-Game`. A production task may inspect these when relevant. Do not mutate another repository merely because it contains reusable work; cross-repository writes require explicit task scope.
@@ -57,14 +57,19 @@ and stop repeated identical failures for diagnosis. This never relaxes task
 acceptance, validation gates, existing-work-first inspection, Git/MCP safety or
 the single-mutating-agent rule.
 
+A provider turn completing is activity, not proof of progress. Repeating an
+identical gate with unchanged code/configuration/evidence must stop at the local
+loop guard rather than wake a cloud provider indefinitely.
+
 ## Unreal build execution safety
 - UnrealBuildTool writes and rotates diagnostics under `%LOCALAPPDATA%\UnrealBuildTool`. Some AI-agent sandboxes cannot write there even when they can edit the repository.
-- Use the canonical task-appropriate build entry point. `Scripts\Build-ToolLab.cmd` remains the Tool Lab build path; production tasks should establish and then use an equally deterministic CotS build path.
+- Use the canonical task-appropriate build entry point. `Scripts\Build-ToolLab.cmd` remains the Tool Lab build path; production tasks use the fixed `Scripts\CotSProductionLifecycle.py build ...` bridge established by TASK-015.
 - If a build script reports a sandbox/write block, do not retry raw `dotnet`, `UnrealBuildTool`, or `Build.bat` from the same restricted context.
 - A build is verified only when the canonical script returns exit code 0 and UBT reports success.
 
 ## Autonomous lifecycle
 - `Scripts\CotSHostMcp.py` is the agent-neutral host controller for the disposable ToolLab and shared orchestration capabilities. It is not an arbitrary shell/process endpoint.
+- `Scripts\CotSProductionLifecycle.py` is the fixed production host bridge. It targets only `C:\Dev\CotS`, accepts only reviewed operations and bounded task/file inputs, and must never become an arbitrary shell, arbitrary path writer, or arbitrary process endpoint.
 - Respect the persistent single-writer lock and provider-neutral task identity.
 - Production lifecycle automation must retain the same principle: fixed, auditable operations rather than unrestricted host execution.
 
@@ -88,4 +93,4 @@ the single-mutating-agent rule.
 - Keep structured results machine-readable even when also logging human-readable summaries.
 
 ## Current phase
-The toolchain foundation (`TASK-000` through `TASK-016`) is complete. The current phase is **CotS production development**, beginning with `TASK-100` and following `Docs/PRODUCTION_ROADMAP.md`. Production tasks may write `C:\Dev\CotS` only within their stated scope. Shardlands remains donor/reference and read-only.
+The verified foundation currently runs through `TASK-014`. `TASK-015` is the outstanding production-project bootstrap and is explicitly authorized to create/reconcile `C:\Dev\CotS` through the fixed production lifecycle bridge. `TASK-016` remains outstanding where its durable acceptance evidence is incomplete. After the foundation ledger records both as `COMPLETE_VERIFIED`, continue with `TASK-100` and follow `Docs/PRODUCTION_ROADMAP.md` in order. Shardlands remains donor/reference and read-only.
