@@ -44,6 +44,10 @@ class ProductionLifecycleTests(unittest.TestCase):
         self.assertTrue((lifecycle.PRODUCTION / "CotS.uproject").is_file())
         self.assertTrue((lifecycle.PRODUCTION / "Source" / "CotS" / "CotS.cpp").is_file())
         self.assertTrue((lifecycle.PRODUCTION / "Source" / "CotSServer.Target.cs").is_file())
+        self.assertIn(
+            "BuildSettingsVersion.V7",
+            (lifecycle.PRODUCTION / "Source" / "CotSEditor.Target.cs").read_text(encoding="utf-8"),
+        )
         self.assertFalse((lifecycle.PRODUCTION / ".git").exists())
 
     def test_bootstrap_never_overwrites_conflicting_existing_file(self):

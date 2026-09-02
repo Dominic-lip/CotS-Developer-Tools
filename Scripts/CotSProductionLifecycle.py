@@ -171,7 +171,7 @@ def _bootstrap_files() -> dict[str, str]:
             "    public CotSTarget(TargetInfo Target) : base(Target)\n"
             "    {\n"
             "        Type = TargetType.Game;\n"
-            "        DefaultBuildSettings = BuildSettingsVersion.V6;\n"
+            "        DefaultBuildSettings = BuildSettingsVersion.V7;\n"
             "        IncludeOrderVersion = EngineIncludeOrderVersion.Latest;\n"
             "        ExtraModuleNames.Add(\"CotS\");\n"
             "    }\n"
@@ -184,7 +184,7 @@ def _bootstrap_files() -> dict[str, str]:
             "    public CotSEditorTarget(TargetInfo Target) : base(Target)\n"
             "    {\n"
             "        Type = TargetType.Editor;\n"
-            "        DefaultBuildSettings = BuildSettingsVersion.V6;\n"
+            "        DefaultBuildSettings = BuildSettingsVersion.V7;\n"
             "        IncludeOrderVersion = EngineIncludeOrderVersion.Latest;\n"
             "        ExtraModuleNames.Add(\"CotS\");\n"
             "    }\n"
@@ -197,7 +197,7 @@ def _bootstrap_files() -> dict[str, str]:
             "    public CotSServerTarget(TargetInfo Target) : base(Target)\n"
             "    {\n"
             "        Type = TargetType.Server;\n"
-            "        DefaultBuildSettings = BuildSettingsVersion.V6;\n"
+            "        DefaultBuildSettings = BuildSettingsVersion.V7;\n"
             "        IncludeOrderVersion = EngineIncludeOrderVersion.Latest;\n"
             "        ExtraModuleNames.Add(\"CotS\");\n"
             "    }\n"
@@ -390,8 +390,15 @@ def build(target: str = "editor", timeout_seconds: int = 1800) -> dict[str, Any]
     if not PROJECT.is_file() or not BUILD_BAT.is_file():
         raise Refused("production project or UE 5.8 Build.bat is missing")
     target_name = {"editor": "CotSEditor", "game": "CotS", "server": "CotSServer"}[target]
-    command_line = f'call "{BUILD_BAT}" {target_name} Win64 Development -Project="{PROJECT}" -WaitMutex -NoHotReloadFromIDE'
-    result = _run(["cmd.exe", "/d", "/s", "/c", command_line], cwd=PRODUCTION, timeout=max(60, min(7200, int(timeout_seconds))), creationflags=CREATE_NO_WINDOW)
+    result = _run(
+        [
+            str(BUILD_BAT), target_name, "Win64", "Development",
+            f"-Project={PROJECT}", "-WaitMutex", "-NoHotReloadFromIDE",
+        ],
+        cwd=PRODUCTION,
+        timeout=max(60, min(7200, int(timeout_seconds))),
+        creationflags=CREATE_NO_WINDOW,
+    )
     _write_state(last_operation="build", build_target=target, build_exit_code=result["exit_code"])
     return {"success": result["exit_code"] == 0, "target": target, **result}
 
