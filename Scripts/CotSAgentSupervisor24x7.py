@@ -5,19 +5,27 @@ This wrapper leaves the reviewed supervisor logic intact but places a strict,
 local schema boundary between provider text and the supervisor. Provider output
 is untrusted telemetry: malformed shapes are repaired locally and never allowed
 to crash the autonomous process.
+
+It also consumes a bounded local routing override produced by the 24x7 legacy-
+governor recovery layer. That prevents an explicit/locally selected provider
+handoff from being lost when the parked legacy supervisor is restarted.
 """
 from __future__ import annotations
 
+import json
 import sys
+import time
 import traceback
 from typing import Any
 
 import CotSAgentSupervisor as base
 from CotS24x7Common import DailyTelemetry, sanitize_context, safe_nonnegative_int
+from CotSLegacyGovernorRecovery import ROUTING_OVERRIDE
 
 telemetry = DailyTelemetry()
 _original_load_state = base.load_state
 _original_parse = base.parse_compact_context
+ROUTING_OVERRIDE_MAX_AGE_SECONDS = 6 * 60 * 60
 
 
 def _repair_efficiency(value: object) -> dict[str, Any]:
@@ -47,6 +55,50 @@ def _repair_provider(value: object) -> dict[str, Any]:
     return info
 
 
+def _read_routing_override() -> dict[str, Any]:
+    try:
+        value = json.loads(ROUTING_OVERRIDE.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def apply_routing_override(state: dict[str, Any], override: dict[str, Any], *, now: float | None = None) -> tuple[dict[str, Any], bool]:
+    """Apply one still-relevant provider route without inventing provider work."""
+    if not isinstance(state, dict) or not isinstance(override, dict):
+        return state, False
+    now = time.time() if now is None else float(now)
+    target = str(override.get("target") or "").strip().lower()
+    task = str(override.get("task") or "").strip()
+    at = override.get("at")
+    baseline = safe_nonnegative_int(override.get("baseline_turn_count"), 0)
+    current_turn = safe_nonnegative_int(state.get("turn_count"), 0)
+    if target not in {"codex", "claude"} or not task:
+        return state, False
+    if not isinstance(at, (int, float)) or now - float(at) > ROUTING_OVERRIDE_MAX_AGE_SECONDS:
+        return state, False
+    if current_turn > baseline:
+        return state, False
+
+    compact = state.get("compact_task_context") if isinstance(state.get("compact_task_context"), dict) else {}
+    candidates = {
+        str(state.get("task") or ""),
+        str(state.get("scheduled_task") or ""),
+        str(state.get("active_task_override") or ""),
+        str(compact.get("task_id") or ""),
+    }
+    candidates.discard("")
+    if candidates and task not in candidates:
+        return state, False
+
+    result = dict(state)
+    result["pending_handoff_target"] = target
+    result["active_task_override"] = task
+    # Do not change preferred_agent. The legacy governor explicitly recognises
+    # pending_handoff_target as authority to use the non-preferred provider.
+    return result, True
+
+
 def hardened_load_state() -> dict[str, Any]:
     state = _original_load_state()
     if not isinstance(state, dict):
@@ -60,6 +112,17 @@ def hardened_load_state() -> dict[str, Any]:
     failures = state.get("failure_fingerprints")
     if not isinstance(failures, dict):
         state["failure_fingerprints"] = {}
+
+    override = _read_routing_override()
+    state, applied = apply_routing_override(state, override)
+    if applied:
+        telemetry.emit(
+            "LEGACY_ROUTE_RESTORED",
+            f"Restored bounded provider route to {state.get('pending_handoff_target')} for {override.get('task')}",
+            target=state.get("pending_handoff_target"),
+            task=override.get("task"),
+            mode=override.get("mode"),
+        )
     return state
 
 
