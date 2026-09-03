@@ -36,6 +36,7 @@ BUILD_BAT = ENGINE / "Engine" / "Build" / "BatchFiles" / "Build.bat"
 MCP_HOST, MCP_PORT = "127.0.0.1", 8000
 NETWORKED_AUTOMATION_TEST = "CotS.Runtime.NetworkProbe.TwoParticipantLifecycle"
 PLATFORM_IDENTITY_AUTOMATION_TEST = "CotS.Platform.Identity.CharacterSelectionContract"
+PERSISTENCE_AUTOMATION_TEST = "CotS.Persistence.CanonicalData.SaveRestore"
 MAX_MANIFEST_FILES = 100
 MAX_TEXT_BYTES = 2 * 1024 * 1024
 ALLOWED_TASKS = {"TASK-015", *(f"TASK-{n}" for n in range(100, 116))}
@@ -962,6 +963,54 @@ def platform_identity_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     }
 
 
+def persistence_automation(timeout_seconds: int = 300) -> dict[str, Any]:
+    """Run TASK-103's exact canonical-data persistence automation test."""
+    if status().get("editor_running"):
+        raise Refused("close the production editor before running persistence automation")
+    if not PROJECT.is_file() or not EDITOR_CMD.is_file():
+        raise Refused("production project or UE 5.8 editor executable is missing")
+    mcp_override = "-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False"
+    result = _run(
+        [
+            str(EDITOR_CMD), str(PROJECT), mcp_override,
+            f"-ExecCmds=Automation RunTests {PERSISTENCE_AUTOMATION_TEST};Quit",
+            "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound",
+        ],
+        cwd=PRODUCTION,
+        timeout=max(60, min(1200, int(timeout_seconds))),
+        creationflags=NEW_PROCESS_GROUP,
+    )
+    log_path = PRODUCTION / "Saved" / "Logs" / "CotS.log"
+    expected_success = (
+        f"Test Completed. Result={{Success}} Name={{SaveRestore}} Path={{{PERSISTENCE_AUTOMATION_TEST}}}"
+    )
+    automation_log_tail = ""
+    for _ in range(20):
+        try:
+            automation_log_tail = log_path.read_text(encoding="utf-8", errors="replace")[-20000:]
+        except OSError:
+            automation_log_tail = ""
+        if expected_success in automation_log_tail and "**** TEST COMPLETE. EXIT CODE: 0 ****" in automation_log_tail:
+            break
+        time.sleep(0.25)
+    successful = (
+        result["exit_code"] == 0
+        and expected_success in automation_log_tail
+        and "**** TEST COMPLETE. EXIT CODE: 0 ****" in automation_log_tail
+    )
+    _write_state(
+        last_operation="persistence-automation",
+        persistence_automation_exit_code=result["exit_code"],
+        persistence_automation_test=PERSISTENCE_AUTOMATION_TEST,
+    )
+    return {
+        "success": successful,
+        "test": PERSISTENCE_AUTOMATION_TEST,
+        "automation_log_verified": expected_success in automation_log_tail,
+        **result,
+    }
+
+
 def create_entry_map(timeout_seconds: int = 300) -> dict[str, Any]:
     """Create only TASK-015's canonical entry map through UE's Python commandlet."""
     info = status()
@@ -1047,6 +1096,7 @@ def main() -> int:
     smoke_parser = sub.add_parser("smoke"); smoke_parser.add_argument("--timeout", type=int, default=300)
     network_parser = sub.add_parser("networked-automation"); network_parser.add_argument("--timeout", type=int, default=300)
     identity_parser = sub.add_parser("platform-identity-automation"); identity_parser.add_argument("--timeout", type=int, default=300)
+    persistence_parser = sub.add_parser("persistence-automation"); persistence_parser.add_argument("--timeout", type=int, default=300)
     map_parser = sub.add_parser("create-entry-map"); map_parser.add_argument("--timeout", type=int, default=300)
     sub.add_parser("open")
     close_parser = sub.add_parser("close"); close_parser.add_argument("--timeout", type=int, default=45)
@@ -1071,6 +1121,7 @@ def main() -> int:
         elif args.operation == "smoke": value = smoke(args.timeout)
         elif args.operation == "networked-automation": value = networked_automation(args.timeout)
         elif args.operation == "platform-identity-automation": value = platform_identity_automation(args.timeout)
+        elif args.operation == "persistence-automation": value = persistence_automation(args.timeout)
         elif args.operation == "create-entry-map": value = create_entry_map(args.timeout)
         elif args.operation == "open": value = open_editor()
         elif args.operation == "close": value = close_editor(args.timeout)
