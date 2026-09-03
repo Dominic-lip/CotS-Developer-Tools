@@ -222,7 +222,8 @@
     },
     {
       "id": "TASK-112",
-      "status": "NOT_STARTED"
+      "status": "COMPLETE_VERIFIED",
+      "evidence": ["Docs/Validation/TASK-112_COMBAT_PROOF.md: production build and Unreal automation", "Production commit 7c63c05: combat authority intent"]
     },
     {
       "id": "TASK-113",

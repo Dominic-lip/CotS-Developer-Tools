@@ -45,6 +45,7 @@ RENEWABLE_AUTOMATION_TEST = "CotS.World.Ecology.RenewableState"
 KNOWLEDGE_AUTOMATION_TEST = "CotS.World.Settlement.KnowledgeLedger"
 ECONOMY_AUTOMATION_TEST = "CotS.Economy.GoodsLedger"
 LAW_AUTOMATION_TEST = "CotS.Law.WarrantLedger"
+COMBAT_AUTOMATION_TEST = "CotS.Combat.Authority.IntentValidation"
 MAX_MANIFEST_FILES = 100
 MAX_TEXT_BYTES = 2 * 1024 * 1024
 ALLOWED_TASKS = {"TASK-015", *(f"TASK-{n}" for n in range(100, 116))}
@@ -1114,6 +1115,9 @@ def economy_automation(timeout_seconds: int = 300) -> dict[str, Any]:
 def law_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     result=_run([str(EDITOR_CMD),str(PROJECT),"-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False",f"-ExecCmds=Automation RunTests {LAW_AUTOMATION_TEST};Quit","-unattended","-nop4","-nosplash","-NullRHI","-NoSound"],cwd=PRODUCTION,timeout=max(60,min(1200,int(timeout_seconds))),creationflags=NEW_PROCESS_GROUP);log=(PRODUCTION/"Saved"/"Logs"/"CotS.log").read_text(encoding="utf-8",errors="replace")[-20000:];expected=f"Test Completed. Result={{Success}} Name={{WarrantLedger}} Path={{{LAW_AUTOMATION_TEST}}}";return {"success":result["exit_code"]==0 and expected in log and "**** TEST COMPLETE. EXIT CODE: 0 ****" in log,"test":LAW_AUTOMATION_TEST,"automation_log_verified":expected in log,**result}
 
+def combat_automation(timeout_seconds: int = 300) -> dict[str, Any]:
+    result=_run([str(EDITOR_CMD),str(PROJECT),"-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False",f"-ExecCmds=Automation RunTests {COMBAT_AUTOMATION_TEST};Quit","-unattended","-nop4","-nosplash","-NullRHI","-NoSound"],cwd=PRODUCTION,timeout=max(60,min(1200,int(timeout_seconds))),creationflags=NEW_PROCESS_GROUP);log=(PRODUCTION/"Saved"/"Logs"/"CotS.log").read_text(encoding="utf-8",errors="replace")[-20000:];expected=f"Test Completed. Result={{Success}} Name={{IntentValidation}} Path={{{COMBAT_AUTOMATION_TEST}}}";return {"success":result["exit_code"]==0 and expected in log and "**** TEST COMPLETE. EXIT CODE: 0 ****" in log,"test":COMBAT_AUTOMATION_TEST,"automation_log_verified":expected in log,**result}
+
 
 def create_entry_map(timeout_seconds: int = 300) -> dict[str, Any]:
     """Create only TASK-015's canonical entry map through UE's Python commandlet."""
@@ -1209,6 +1213,7 @@ def main() -> int:
     knowledge_parser = sub.add_parser("knowledge-automation"); knowledge_parser.add_argument("--timeout", type=int, default=300)
     economy_parser = sub.add_parser("economy-automation"); economy_parser.add_argument("--timeout", type=int, default=300)
     law_parser = sub.add_parser("law-automation"); law_parser.add_argument("--timeout", type=int, default=300)
+    combat_parser = sub.add_parser("combat-automation"); combat_parser.add_argument("--timeout", type=int, default=300)
     map_parser = sub.add_parser("create-entry-map"); map_parser.add_argument("--timeout", type=int, default=300)
     sub.add_parser("open")
     close_parser = sub.add_parser("close"); close_parser.add_argument("--timeout", type=int, default=45)
@@ -1242,6 +1247,7 @@ def main() -> int:
         elif args.operation == "knowledge-automation": value = knowledge_automation(args.timeout)
         elif args.operation == "economy-automation": value = economy_automation(args.timeout)
         elif args.operation == "law-automation": value = law_automation(args.timeout)
+        elif args.operation == "combat-automation": value = combat_automation(args.timeout)
         elif args.operation == "create-entry-map": value = create_entry_map(args.timeout)
         elif args.operation == "open": value = open_editor()
         elif args.operation == "close": value = close_editor(args.timeout)
