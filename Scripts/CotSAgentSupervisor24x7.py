@@ -7,8 +7,9 @@ is untrusted telemetry: malformed shapes are repaired locally and never allowed
 to crash the autonomous process.
 
 It also consumes a bounded local routing override produced by the 24x7 legacy-
-governor recovery layer and exposes the fixed production lifecycle bridge only
-for the explicitly scheduled production bootstrap/roadmap tasks.
+governor recovery layer, extends the checked-in roadmap scheduler through the
+read-only TASK-116 reconciliation gate, and exposes the fixed production
+lifecycle bridge only for the explicitly authorized production-mutation tasks.
 """
 from __future__ import annotations
 
@@ -70,6 +71,56 @@ def _production_task(task: object) -> bool:
         return True
     match = re.fullmatch(r"TASK-(\d{3})", value)
     return bool(match and 100 <= int(match.group(1)) <= 115)
+
+
+def hardened_load_foundation_completion_state(path=None) -> dict[str, Any]:
+    """Fail-closed roadmap loader extended through the read-only TASK-116 gate.
+
+    The base supervisor intentionally recognizes a fixed reviewed task set.  The
+    24x7 wrapper owns the post-115 extension so the large reviewed base module
+    does not need an unrelated rewrite.  TASK-116 is scheduling authority only;
+    `_production_task()` deliberately remains capped at TASK-115, therefore the
+    fixed production mutation bridge is not exposed for this reconciliation.
+    """
+    path = base.FOUNDATION_COMPLETION_STATE if path is None else path
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise base.AppServerError(f"foundation_completion_state_invalid: {error}") from error
+    if document.get("schema_version") != 1:
+        raise base.AppServerError("foundation_completion_state_invalid: unsupported schema version")
+    tasks = document.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise base.AppServerError("foundation_completion_state_invalid: tasks must be a non-empty list")
+    seen: set[str] = set()
+    for entry in tasks:
+        task_id = entry.get("id") if isinstance(entry, dict) else None
+        status = entry.get("status") if isinstance(entry, dict) else None
+        if not isinstance(task_id, str) or not re.fullmatch(
+            r"TASK-(?:0(?:0[0-9]|1[0-6]|08[A-C])|1(?:0[0-9]|1[0-6]))", task_id
+        ):
+            raise base.AppServerError(f"foundation_completion_state_invalid: invalid task id {task_id!r}")
+        if task_id in seen:
+            raise base.AppServerError(f"foundation_completion_state_invalid: duplicate task {task_id}")
+        if status not in {
+            "COMPLETE_VERIFIED", "COMPLETE_BUT_EVIDENCE_MISSING", "PARTIAL",
+            "NOT_STARTED", "SUPERSEDED", base.DEFERRED_PROVIDER_VERIFICATION,
+        }:
+            raise base.AppServerError(f"foundation_completion_state_invalid: invalid status for {task_id}")
+        if status == base.VERIFIED_COMPLETION_STATUS and not entry.get("evidence"):
+            raise base.AppServerError(f"foundation_completion_state_invalid: {task_id} lacks durable evidence references")
+        seen.add(task_id)
+    expected = (
+        {f"TASK-{number:03d}" for number in range(9)}
+        | {"TASK-008A", "TASK-008B", "TASK-008C"}
+        | {f"TASK-{number:03d}" for number in range(9, 17)}
+        | {f"TASK-{number}" for number in range(100, 117)}
+    )
+    if seen != expected:
+        raise base.AppServerError(
+            "foundation_completion_state_invalid: foundation and production roadmap task records are required"
+        )
+    return document
 
 
 def _repair_efficiency(value: object) -> dict[str, Any]:
@@ -254,6 +305,7 @@ def hardened_scheduled_task_instruction(task_override: str | None = None) -> str
 
 
 def install_hardening() -> None:
+    base.load_foundation_completion_state = hardened_load_foundation_completion_state
     base.load_state = hardened_load_state
     base.parse_compact_context = hardened_parse_compact_context
     base.turn_outcome = hardened_turn_outcome
