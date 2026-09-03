@@ -38,6 +38,7 @@ NETWORKED_AUTOMATION_TEST = "CotS.Runtime.NetworkProbe.TwoParticipantLifecycle"
 PLATFORM_IDENTITY_AUTOMATION_TEST = "CotS.Platform.Identity.CharacterSelectionContract"
 PERSISTENCE_AUTOMATION_TEST = "CotS.Persistence.CanonicalData.SaveRestore"
 EMBODIMENT_AUTOMATION_TEST = "CotS.Character.Embodiment.InputContract"
+INVENTORY_AUTOMATION_TEST = "CotS.Items.Inventory.AuthorityContract"
 MAX_MANIFEST_FILES = 100
 MAX_TEXT_BYTES = 2 * 1024 * 1024
 ALLOWED_TASKS = {"TASK-015", *(f"TASK-{n}" for n in range(100, 116))}
@@ -1060,6 +1061,27 @@ def embodiment_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     }
 
 
+def inventory_automation(timeout_seconds: int = 300) -> dict[str, Any]:
+    """Run TASK-105's exact inventory authority contract test."""
+    if status().get("editor_running"):
+        raise Refused("close the production editor before running inventory automation")
+    if not PROJECT.is_file() or not EDITOR_CMD.is_file():
+        raise Refused("production project or UE 5.8 editor executable is missing")
+    override = "-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False"
+    result = _run([str(EDITOR_CMD), str(PROJECT), override, f"-ExecCmds=Automation RunTests {INVENTORY_AUTOMATION_TEST};Quit", "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound"], cwd=PRODUCTION, timeout=max(60, min(1200, int(timeout_seconds))), creationflags=NEW_PROCESS_GROUP)
+    log_path = PRODUCTION / "Saved" / "Logs" / "CotS.log"
+    expected = f"Test Completed. Result={{Success}} Name={{AuthorityContract}} Path={{{INVENTORY_AUTOMATION_TEST}}}"
+    log = ""
+    for _ in range(20):
+        try: log = log_path.read_text(encoding="utf-8", errors="replace")[-20000:]
+        except OSError: log = ""
+        if expected in log and "**** TEST COMPLETE. EXIT CODE: 0 ****" in log: break
+        time.sleep(0.25)
+    success = result["exit_code"] == 0 and expected in log and "**** TEST COMPLETE. EXIT CODE: 0 ****" in log
+    _write_state(last_operation="inventory-automation", inventory_automation_exit_code=result["exit_code"], inventory_automation_test=INVENTORY_AUTOMATION_TEST)
+    return {"success": success, "test": INVENTORY_AUTOMATION_TEST, "automation_log_verified": expected in log, **result}
+
+
 def create_entry_map(timeout_seconds: int = 300) -> dict[str, Any]:
     """Create only TASK-015's canonical entry map through UE's Python commandlet."""
     info = status()
@@ -1147,6 +1169,7 @@ def main() -> int:
     identity_parser = sub.add_parser("platform-identity-automation"); identity_parser.add_argument("--timeout", type=int, default=300)
     persistence_parser = sub.add_parser("persistence-automation"); persistence_parser.add_argument("--timeout", type=int, default=300)
     embodiment_parser = sub.add_parser("embodiment-automation"); embodiment_parser.add_argument("--timeout", type=int, default=300)
+    inventory_parser = sub.add_parser("inventory-automation"); inventory_parser.add_argument("--timeout", type=int, default=300)
     map_parser = sub.add_parser("create-entry-map"); map_parser.add_argument("--timeout", type=int, default=300)
     sub.add_parser("open")
     close_parser = sub.add_parser("close"); close_parser.add_argument("--timeout", type=int, default=45)
@@ -1173,6 +1196,7 @@ def main() -> int:
         elif args.operation == "platform-identity-automation": value = platform_identity_automation(args.timeout)
         elif args.operation == "persistence-automation": value = persistence_automation(args.timeout)
         elif args.operation == "embodiment-automation": value = embodiment_automation(args.timeout)
+        elif args.operation == "inventory-automation": value = inventory_automation(args.timeout)
         elif args.operation == "create-entry-map": value = create_entry_map(args.timeout)
         elif args.operation == "open": value = open_editor()
         elif args.operation == "close": value = close_editor(args.timeout)

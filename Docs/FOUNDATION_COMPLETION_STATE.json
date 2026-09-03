@@ -184,7 +184,11 @@
     },
     {
       "id": "TASK-105",
-      "status": "NOT_STARTED"
+      "status": "COMPLETE_VERIFIED",
+      "evidence": [
+        "Docs/Validation/TASK-105_INVENTORY_PROOF.md: production editor build and explicit Unreal inventory authority automation proof",
+        "Production commit 5dbad70: owner-gated stable-item inventory and equipment contract"
+      ]
     },
     {
       "id": "TASK-106",
