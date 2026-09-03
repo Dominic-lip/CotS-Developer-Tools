@@ -41,6 +41,7 @@ file, an agent's outcome marker, or a later task number.
 | TASK-107 | COMPLETE_VERIFIED | Server-time simulation event ledger with idempotency and ordering. | Production commit `b337729`; clean event ledger. | `Docs/Validation/TASK-107_SIMULATION_EVENTS_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
 | TASK-108 | COMPLETE_VERIFIED | Renewable-state authority using stable IDs and server-time readiness. | Production commit `33c6ea8`. | `Docs/Validation/TASK-108_RENEWABLES_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
 | TASK-109 | COMPLETE_VERIFIED | Settlement knowledge ledger with immutable records and owner handoff. | Production commit `c2dad03`. | `Docs/Validation/TASK-109_SETTLEMENT_KNOWLEDGE_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
+| TASK-110 | COMPLETE_VERIFIED | Canonical goods transaction ledger. | Production commit `9597954`. | `Docs/Validation/TASK-110_ECONOMY_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
 
 `SUPERSEDED` is not used: every original foundation task remains a dependency
 or a preserved capability. Production TASK-100 through TASK-115 are present in
