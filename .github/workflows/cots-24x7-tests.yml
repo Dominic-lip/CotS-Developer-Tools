@@ -53,4 +53,4 @@ jobs:
           Scripts/CotS-GitCompletion.py
       - name: Run 24x7 regression tests
         shell: pwsh
-        run: python -m unittest Scripts.tests.test_cots_24x7 Scripts.tests.test_cots_24x7_enhanced Scripts.tests.test_legacy_governor_recovery Scripts.tests.test_process_liveness Scripts.tests.test_loop_guard Scripts.tests.test_production_lifecycle Scripts.tests.test_production_map_bootstrap -v
+        run: python -m unittest Scripts.tests.test_cots_24x7 Scripts.tests.test_cots_24x7_enhanced Scripts.tests.test_legacy_governor_recovery Scripts.tests.test_process_liveness Scripts.tests.test_loop_guard Scripts.tests.test_production_lifecycle Scripts.tests.test_production_map_bootstrap Scripts.tests.test_post115_scheduler -v
