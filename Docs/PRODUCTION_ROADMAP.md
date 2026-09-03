@@ -55,5 +55,8 @@ Build production HUD/interaction/inventory/social flows plus text chat and local
 ### TASK-115 — Integrated Vertical Slice, Scale & Alpha Engineering Gate
 Prove an end-to-end multiplayer slice across identity, server authority, persistence, player embodiment, interaction, world streaming/simulation, economy/NPC/law/combat and authoring. Perform scale/performance/security/observability tests and produce the evidence-backed next backlog rather than assuming alpha readiness.
 
+### TASK-116 — Post-Vertical-Slice Existing-Work Reconciliation
+Before authorizing the next implementation wave, reconcile current CotS production against the freshest reachable Shardlands work — especially Shards 115–119 — and the Website/Platform-API/CotS-Game peers. Produce an evidence-backed dependency/capability/reuse matrix and a TASK-117+ roadmap. TASK-116 is read-only for CotS production, Shardlands and peer repositories; only DeveloperTools evidence/roadmap/scheduler artifacts may be changed.
+
 ## Completion rule
-Do not skip foundational dependencies simply because a donor implementation exists. Conversely, do not rewrite a subsystem when the donor/production implementation already meets the current contracts and passes production validation. The acceptance evidence decides.
+Do not skip foundational dependencies simply because a donor implementation exists. Conversely, do not rewrite a subsystem when the donor/production implementation already meets the current contracts and passes production validation. The acceptance evidence decides. TASK-116 must complete before any post-115 implementation backlog item is promoted into an authorized production-mutation task.
