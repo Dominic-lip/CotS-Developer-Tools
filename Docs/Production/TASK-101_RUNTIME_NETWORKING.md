@@ -84,3 +84,32 @@ the installed engine's all-platform SDK validation requires `MainVersion`
 metadata for LinuxArm64 and VisionOS. The operation records owned worker state
 and reports failure unless both workers have exited. This is an installed-engine
 validation topology gate, not evidence that the network lifecycle test ran.
+
+
+## Final TASK-101 acceptance evidence
+
+TASK-101 reached `COMPLETE_VERIFIED` against production head `d9557ef`.
+
+The final production implementation includes:
+
+- `ACotSNetworkProbeActor`, a replicated server-authoritative validation fixture.
+- A real two-participant Unreal network automation lifecycle.
+- Shared automation-session routing through the fixed lifecycle harness.
+- A client connection to a listen server with reciprocal connection evidence.
+- Server-authoritative actor spawn and server-to-client replication.
+- Client-owned server RPC routing.
+- Server-side sequencing validation and authoritative state mutation.
+- Replication of the resulting authoritative state back to the client.
+- Rejection of a deliberately stale client request without state mutation.
+- Client disconnect with server-observed departure.
+- Preservation of authoritative state while the client is absent.
+- Client reconnect with state re-replication.
+
+Final source-engine acceptance sweep:
+
+- `CotSEditor Win64 Development` ? `Result: Succeeded`.
+- `CotS Win64 Development` ? `Result: Succeeded`; output `C:\Dev\CotS\Binaries\Win64\CotS.exe`.
+- `CotSServer Win64 Development` ? `Result: Succeeded`; output `C:\Dev\CotS\Binaries\Win64\CotSServer.exe`.
+- `CotS.Runtime.NetworkProbe.TwoParticipantLifecycle` ? exit `0`.
+
+The earlier Launcher-engine server-target and all-platform SDK limitations are superseded by the verified UE 5.8.1 source-engine toolchain.
