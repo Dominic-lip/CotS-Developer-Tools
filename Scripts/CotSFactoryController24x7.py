@@ -2,6 +2,7 @@
 """24x7 containment wrapper for the reviewed CotS Factory Controller."""
 from __future__ import annotations
 
+import json
 import sys
 import traceback
 from pathlib import Path
@@ -31,9 +32,49 @@ def hardened_read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+def hardened_authoritative_next_required_task(path: Path = base.COMPLETION_STATE) -> str | None:
+    """Validate the reviewed roadmap universe through the read-only TASK-116 gate."""
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"completion state unreadable: {error}") from error
+    tasks = document.get("tasks")
+    if document.get("schema_version") != 1:
+        raise ValueError("completion state has unsupported schema version")
+    if not isinstance(tasks, list) or not tasks:
+        raise ValueError("completion state has no task list")
+    expected = (
+        {f"TASK-{number:03d}" for number in range(9)}
+        | {"TASK-008A", "TASK-008B", "TASK-008C"}
+        | {f"TASK-{number:03d}" for number in range(9, 17)}
+        | {f"TASK-{number}" for number in range(100, 117)}
+    )
+    allowed = {
+        "COMPLETE_VERIFIED",
+        "COMPLETE_BUT_EVIDENCE_MISSING",
+        "PARTIAL",
+        "NOT_STARTED",
+        "SUPERSEDED",
+        "DEFERRED_PROVIDER_VERIFICATION",
+    }
+    seen: set[str] = set()
+    for entry in tasks:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str) or entry["id"] in seen:
+            raise ValueError("completion state has invalid or duplicate task records")
+        if entry["id"] not in expected or entry.get("status") not in allowed:
+            raise ValueError("completion state has invalid task records")
+        if entry["status"] == "COMPLETE_VERIFIED" and not entry.get("evidence"):
+            raise ValueError(f"completion state lacks evidence for {entry['id']}")
+        seen.add(entry["id"])
+    if seen != expected:
+        raise ValueError("completion state is missing required roadmap tasks")
+    return next((entry["id"] for entry in tasks if entry["status"] != "COMPLETE_VERIFIED"), None)
+
+
 def install_hardening() -> None:
     base.SUPERVISOR_SCRIPT = SCRIPTS / "CotSAgentSupervisor24x7.py"
     base.read_json = hardened_read_json
+    base.authoritative_next_required_task = hardened_authoritative_next_required_task
 
 
 def main() -> int:
