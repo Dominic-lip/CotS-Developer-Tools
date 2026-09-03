@@ -13,6 +13,8 @@ The expected local workspace is:
 
 Known additional read/reference sources include the GitHub repositories `Dominic-lip/Shardlands`, `Dominic-lip/CotS-Website`, `Dominic-lip/CotS-Platform-API`, and `Dominic-lip/CotS-Game`. A production task may inspect these when relevant. Do not mutate another repository merely because it contains reusable work; cross-repository writes require explicit task scope.
 
+`TASK-116` is deliberately a read-only reconciliation gate for `C:\Dev\CotS`, `C:\Dev\Shardlands`, CotS-Website, CotS-Platform-API, CotS-Game and all other donor/peer repositories. During TASK-116 only this DeveloperTools repository may be mutated, and only for the task's evidence, reuse decisions, roadmap/scheduler records and deterministic tests. TASK-116 does not extend the production-mutation authorization beyond TASK-115.
+
 Never delete, reset, clean, reorganize, rename, or wholesale-migrate Shardlands. Never use destructive Git commands (`reset --hard`, forced checkout, history rewrite, force push, broad clean) without explicit human authorization.
 
 ## Existing-work-first production rule
@@ -93,4 +95,4 @@ loop guard rather than wake a cloud provider indefinitely.
 - Keep structured results machine-readable even when also logging human-readable summaries.
 
 ## Current phase
-The verified foundation now runs through `TASK-016` (`Docs/FOUNDATION_COMPLETION_LEDGER.md`, `Docs/FOUNDATION_COMPLETION_STATE.json`). Continue with `TASK-100` and follow `Docs/PRODUCTION_ROADMAP.md` in order. Shardlands remains donor/reference and read-only.
+`TASK-100` through `TASK-115` are complete and the TASK-115 engineering gate explicitly found that CotS is not yet alpha-ready. `TASK-116` is now the next scheduled gate: reconcile the actual existing work — especially Shardlands 115–119 and the Website/Platform API peers — before authorizing further implementation. Shardlands, CotS production and peer repositories remain read-only during TASK-116.
