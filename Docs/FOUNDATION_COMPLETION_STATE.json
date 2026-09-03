@@ -197,7 +197,8 @@
     },
     {
       "id": "TASK-107",
-      "status": "NOT_STARTED"
+      "status": "COMPLETE_VERIFIED",
+      "evidence": ["Docs/Validation/TASK-107_SIMULATION_EVENTS_PROOF.md: production build and Unreal event-ledger automation", "Production commit b337729: server-time event ledger"]
     },
     {
       "id": "TASK-108",
