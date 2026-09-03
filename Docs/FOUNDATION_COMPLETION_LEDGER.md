@@ -44,6 +44,7 @@ file, an agent's outcome marker, or a later task number.
 | TASK-110 | COMPLETE_VERIFIED | Canonical goods transaction ledger. | Production commit `9597954`. | `Docs/Validation/TASK-110_ECONOMY_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
 | TASK-111 | COMPLETE_VERIFIED | Owner-gated immutable warrant ledger. | Production commit `650ff98`. | `Docs/Validation/TASK-111_LAW_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
 | TASK-112 | COMPLETE_VERIFIED | Server-authoritative combat intent validation. | Production commit `7c63c05`. | `Docs/Validation/TASK-112_COMBAT_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
+| TASK-113 | COMPLETE_VERIFIED | Deterministic world-authoring recipe catalog. | Production commit `4c17cba`. | `Docs/Validation/TASK-113_WORLD_AUTHORING_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
 
 `SUPERSEDED` is not used: every original foundation task remains a dependency
 or a preserved capability. Production TASK-100 through TASK-115 are present in
