@@ -217,7 +217,8 @@
     },
     {
       "id": "TASK-111",
-      "status": "NOT_STARTED"
+      "status": "COMPLETE_VERIFIED",
+      "evidence": ["Docs/Validation/TASK-111_LAW_PROOF.md: production build and Unreal automation", "Production commit 650ff98: law warrant ledger"]
     },
     {
       "id": "TASK-112",
