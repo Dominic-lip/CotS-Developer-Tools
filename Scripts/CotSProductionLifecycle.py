@@ -19,6 +19,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -848,9 +849,14 @@ def networked_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     if not PROJECT.is_file() or not EDITOR.is_file() or not EDITOR_CMD.is_file():
         raise Refused("production project or UE 5.8 editor executable is missing")
 
+    session_id = str(uuid.uuid4())
+    session_arg = f"-SessionId={session_id}"
+    session_name_arg = "-SessionName=CotS-TASK101"
+
     mcp_override = "-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False"
     worker_command = [
-        str(EDITOR), str(PROJECT), "-game", "-messaging", mcp_override,
+        str(EDITOR), str(PROJECT), "-game", "-messaging", "-Multiprocess",
+        session_arg, session_name_arg, mcp_override,
         "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound",
     ]
     workers = [
@@ -864,7 +870,8 @@ def networked_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     try:
         time.sleep(5)
         controller_command = [
-            str(EDITOR_CMD), str(PROJECT), "-messaging", mcp_override,
+            str(EDITOR_CMD), str(PROJECT), "-messaging", "-Multiprocess",
+            session_arg, session_name_arg, mcp_override,
             f"-ExecCmds=Automation RunTests {NETWORKED_AUTOMATION_TEST};Quit",
             "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound",
         ]
