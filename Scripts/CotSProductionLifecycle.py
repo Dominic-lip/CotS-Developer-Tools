@@ -39,6 +39,7 @@ PLATFORM_IDENTITY_AUTOMATION_TEST = "CotS.Platform.Identity.CharacterSelectionCo
 PERSISTENCE_AUTOMATION_TEST = "CotS.Persistence.CanonicalData.SaveRestore"
 EMBODIMENT_AUTOMATION_TEST = "CotS.Character.Embodiment.InputContract"
 INVENTORY_AUTOMATION_TEST = "CotS.Items.Inventory.AuthorityContract"
+SPATIAL_AUTOMATION_TEST = "CotS.World.SpatialTravel.AuthorityContract"
 MAX_MANIFEST_FILES = 100
 MAX_TEXT_BYTES = 2 * 1024 * 1024
 ALLOWED_TASKS = {"TASK-015", *(f"TASK-{n}" for n in range(100, 116))}
@@ -1081,6 +1082,15 @@ def inventory_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     _write_state(last_operation="inventory-automation", inventory_automation_exit_code=result["exit_code"], inventory_automation_test=INVENTORY_AUTOMATION_TEST)
     return {"success": success, "test": INVENTORY_AUTOMATION_TEST, "automation_log_verified": expected in log, **result}
 
+def spatial_automation(timeout_seconds: int = 300) -> dict[str, Any]:
+    """Run TASK-106's exact spatial-travel authority test."""
+    if status().get("editor_running"): raise Refused("close the production editor before running spatial automation")
+    override = "-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False"
+    result = _run([str(EDITOR_CMD),str(PROJECT),override,f"-ExecCmds=Automation RunTests {SPATIAL_AUTOMATION_TEST};Quit","-unattended","-nop4","-nosplash","-NullRHI","-NoSound"],cwd=PRODUCTION,timeout=max(60,min(1200,int(timeout_seconds))),creationflags=NEW_PROCESS_GROUP)
+    log=(PRODUCTION/"Saved"/"Logs"/"CotS.log").read_text(encoding="utf-8",errors="replace")[-20000:]
+    expected=f"Test Completed. Result={{Success}} Name={{AuthorityContract}} Path={{{SPATIAL_AUTOMATION_TEST}}}"
+    return {"success":result["exit_code"]==0 and expected in log and "**** TEST COMPLETE. EXIT CODE: 0 ****" in log,"test":SPATIAL_AUTOMATION_TEST,"automation_log_verified":expected in log,**result}
+
 
 def create_entry_map(timeout_seconds: int = 300) -> dict[str, Any]:
     """Create only TASK-015's canonical entry map through UE's Python commandlet."""
@@ -1170,6 +1180,7 @@ def main() -> int:
     persistence_parser = sub.add_parser("persistence-automation"); persistence_parser.add_argument("--timeout", type=int, default=300)
     embodiment_parser = sub.add_parser("embodiment-automation"); embodiment_parser.add_argument("--timeout", type=int, default=300)
     inventory_parser = sub.add_parser("inventory-automation"); inventory_parser.add_argument("--timeout", type=int, default=300)
+    spatial_parser = sub.add_parser("spatial-automation"); spatial_parser.add_argument("--timeout", type=int, default=300)
     map_parser = sub.add_parser("create-entry-map"); map_parser.add_argument("--timeout", type=int, default=300)
     sub.add_parser("open")
     close_parser = sub.add_parser("close"); close_parser.add_argument("--timeout", type=int, default=45)
@@ -1197,6 +1208,7 @@ def main() -> int:
         elif args.operation == "persistence-automation": value = persistence_automation(args.timeout)
         elif args.operation == "embodiment-automation": value = embodiment_automation(args.timeout)
         elif args.operation == "inventory-automation": value = inventory_automation(args.timeout)
+        elif args.operation == "spatial-automation": value = spatial_automation(args.timeout)
         elif args.operation == "create-entry-map": value = create_entry_map(args.timeout)
         elif args.operation == "open": value = open_editor()
         elif args.operation == "close": value = close_editor(args.timeout)
