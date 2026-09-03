@@ -45,6 +45,7 @@ file, an agent's outcome marker, or a later task number.
 | TASK-111 | COMPLETE_VERIFIED | Owner-gated immutable warrant ledger. | Production commit `650ff98`. | `Docs/Validation/TASK-111_LAW_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
 | TASK-112 | COMPLETE_VERIFIED | Server-authoritative combat intent validation. | Production commit `7c63c05`. | `Docs/Validation/TASK-112_COMBAT_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
 | TASK-113 | COMPLETE_VERIFIED | Deterministic world-authoring recipe catalog. | Production commit `4c17cba`. | `Docs/Validation/TASK-113_WORLD_AUTHORING_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | None. |
+| TASK-114 | COMPLETE_VERIFIED | Authenticated social text and local-voice policy seam. | Production commit `6992919`. | `Docs/Validation/TASK-114_SOCIAL_COMMUNICATION_PROOF.md`: UE 5.8 build and focused Unreal automation passed. | Website/Platform adapters remain deferred. |
 
 `SUPERSEDED` is not used: every original foundation task remains a dependency
 or a preserved capability. Production TASK-100 through TASK-115 are present in
