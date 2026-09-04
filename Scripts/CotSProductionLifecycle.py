@@ -48,6 +48,7 @@ LAW_AUTOMATION_TEST = "CotS.Law.WarrantLedger"
 COMBAT_AUTOMATION_TEST = "CotS.Combat.Authority.IntentValidation"
 WORLD_AUTHORING_AUTOMATION_TEST = "CotS.World.Authoring.RecipeValidation"
 SOCIAL_COMMUNICATION_AUTOMATION_TEST = "CotS.Social.Communication.AuthorityPolicy"
+OPERATIONS_AUTOMATION_TEST = "CotS.Operations.EventObservability.AuthorityAuditFailureInjection"
 VERTICAL_SLICE_AUTOMATION_TESTS = (
     PLATFORM_IDENTITY_AUTOMATION_TEST, PERSISTENCE_AUTOMATION_TEST,
     EMBODIMENT_AUTOMATION_TEST, INVENTORY_AUTOMATION_TEST, SPATIAL_AUTOMATION_TEST,
@@ -1133,6 +1134,15 @@ def world_authoring_automation(timeout_seconds: int = 300) -> dict[str, Any]:
 def social_communication_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     result=_run([str(EDITOR_CMD),str(PROJECT),"-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False",f"-ExecCmds=Automation RunTests {SOCIAL_COMMUNICATION_AUTOMATION_TEST};Quit","-unattended","-nop4","-nosplash","-NullRHI","-NoSound"],cwd=PRODUCTION,timeout=max(60,min(1200,int(timeout_seconds))),creationflags=NEW_PROCESS_GROUP);log=(PRODUCTION/"Saved"/"Logs"/"CotS.log").read_text(encoding="utf-8",errors="replace")[-20000:];expected=f"Test Completed. Result={{Success}} Name={{AuthorityPolicy}} Path={{{SOCIAL_COMMUNICATION_AUTOMATION_TEST}}}";return {"success":result["exit_code"]==0 and expected in log and "**** TEST COMPLETE. EXIT CODE: 0 ****" in log,"test":SOCIAL_COMMUNICATION_AUTOMATION_TEST,"automation_log_verified":expected in log,**result}
 
+def operations_automation(timeout_seconds: int = 300) -> dict[str, Any]:
+    """Run TASK-117's fixed server-only observability contract test."""
+    if status().get("editor_running"):
+        raise Refused("close the production editor before running operations automation")
+    result = _run([str(EDITOR_CMD), str(PROJECT), "-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False", f"-ExecCmds=Automation RunTests {OPERATIONS_AUTOMATION_TEST};Quit", "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound"], cwd=PRODUCTION, timeout=max(60, min(1200, int(timeout_seconds))), creationflags=NEW_PROCESS_GROUP)
+    log = (PRODUCTION / "Saved" / "Logs" / "CotS.log").read_text(encoding="utf-8", errors="replace")[-20000:]
+    expected = f"Test Completed. Result={{Success}} Name={{AuthorityAuditFailureInjection}} Path={{{OPERATIONS_AUTOMATION_TEST}}}"
+    return {"success": result["exit_code"] == 0 and expected in log and "**** TEST COMPLETE. EXIT CODE: 0 ****" in log, "test": OPERATIONS_AUTOMATION_TEST, "automation_log_verified": expected in log, **result}
+
 def vertical_slice_automation(timeout_seconds: int = 600) -> dict[str, Any]:
     """Run the fixed non-networked production-contract integration suite."""
     if status().get("editor_running"): raise Refused("close the production editor before running vertical-slice automation")
@@ -1239,6 +1249,7 @@ def main() -> int:
     combat_parser = sub.add_parser("combat-automation"); combat_parser.add_argument("--timeout", type=int, default=300)
     world_authoring_parser = sub.add_parser("world-authoring-automation"); world_authoring_parser.add_argument("--timeout", type=int, default=300)
     social_communication_parser = sub.add_parser("social-communication-automation"); social_communication_parser.add_argument("--timeout", type=int, default=300)
+    operations_parser = sub.add_parser("operations-automation"); operations_parser.add_argument("--timeout", type=int, default=300)
     vertical_slice_parser = sub.add_parser("vertical-slice-automation"); vertical_slice_parser.add_argument("--timeout", type=int, default=600)
     map_parser = sub.add_parser("create-entry-map"); map_parser.add_argument("--timeout", type=int, default=300)
     sub.add_parser("open")
@@ -1276,6 +1287,7 @@ def main() -> int:
         elif args.operation == "combat-automation": value = combat_automation(args.timeout)
         elif args.operation == "world-authoring-automation": value = world_authoring_automation(args.timeout)
         elif args.operation == "social-communication-automation": value = social_communication_automation(args.timeout)
+        elif args.operation == "operations-automation": value = operations_automation(args.timeout)
         elif args.operation == "vertical-slice-automation": value = vertical_slice_automation(args.timeout)
         elif args.operation == "create-entry-map": value = create_entry_map(args.timeout)
         elif args.operation == "open": value = open_editor()
