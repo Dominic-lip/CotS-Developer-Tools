@@ -27,8 +27,12 @@ read-only unless a later task explicitly names and authorizes a peer mutation.
 All production host/filesystem/build/Git work must use the fixed audited command
 `python Scripts/CotSProductionLifecycleCampaign.py ...`; do not substitute
 arbitrary shell, PowerShell, raw Git mutation, arbitrary Python filesystem code,
-or writes elsewhere under C:\Dev. The configured auto-reviewer remains the
-approval authority for the fixed adapter's supported sandbox escalation only.
+or writes elsewhere under C:\Dev. The campaign adapter proxies those exact
+fixed operations to a loopback host bridge owned by the persistent watchdog, so
+provider sandbox ACLs are not a reason to attempt direct writes, global Git
+configuration changes, ACL changes, or alternate host commands. If the bridge
+is unavailable, report that exact lifecycle gate so the local watchdog can
+restart its fixed host service; do not retry an unchanged direct-access strategy.
 """.strip()
 
 

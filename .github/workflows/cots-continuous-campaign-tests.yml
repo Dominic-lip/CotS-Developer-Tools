@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - fix/continuous-24x7-campaign
+      - fix/campaign-production-host-bridge
   pull_request:
     branches:
       - main
@@ -26,7 +27,8 @@ jobs:
           Scripts/CotSAgentSupervisorCampaign.py
           Scripts/CotSFactoryControllerCampaign.py
           Scripts/CotSProductionLifecycleCampaign.py
+          Scripts/CotSProductionHostBridge.py
           Scripts/CotSWatchdogCampaign.py
       - name: Run campaign regressions
         shell: pwsh
-        run: python -m unittest Scripts.tests.test_post115_scheduler Scripts.tests.test_continuous_campaign -v
+        run: python -m unittest Scripts.tests.test_post115_scheduler Scripts.tests.test_continuous_campaign Scripts.tests.test_production_host_bridge -v
