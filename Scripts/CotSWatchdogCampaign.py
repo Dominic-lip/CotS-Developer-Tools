@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Continuous campaign watchdog.
 
-Uses the production 24x7 watchdog but treats an authoritatively completed
-reviewed campaign as an idle terminal state, never as a recoverable failure.
-This prevents pointless FixIt turns and quota-protection cooldowns when there is
-simply no reviewed work left.
+Uses the production 24x7 watchdog but routes factory work through the reviewed
+campaign wrappers and treats an authoritatively completed campaign as an idle
+terminal state, never as a recoverable failure.
 """
 from __future__ import annotations
 
@@ -17,7 +16,12 @@ import CotSWatchdog24x7Final as final
 from CotS24x7Common import FACTORY_STATE, SUPERVISOR_STATE, atomic_json, read_json
 
 REPO = Path(__file__).resolve().parent.parent
+SCRIPTS = REPO / "Scripts"
 COMPLETION_STATE = REPO / "Docs" / "FOUNDATION_COMPLETION_STATE.json"
+
+# The final watchdog ultimately launches enhanced.base.FACTORY. Override only
+# that fixed reviewed path; no arbitrary executable selection is introduced.
+final.enhanced.base.FACTORY = SCRIPTS / "CotSFactoryControllerCampaign.py"
 
 
 def campaign_complete() -> bool:
