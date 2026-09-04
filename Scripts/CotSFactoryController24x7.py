@@ -34,7 +34,7 @@ def hardened_read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_reviewed_completion_state(path: Path = base.COMPLETION_STATE) -> dict[str, Any]:
-    """Load and fail-closed validate the reviewed roadmap through TASK-121."""
+    """Load and fail-closed validate the reviewed roadmap through TASK-116."""
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -48,7 +48,7 @@ def _load_reviewed_completion_state(path: Path = base.COMPLETION_STATE) -> dict[
         {f"TASK-{number:03d}" for number in range(9)}
         | {"TASK-008A", "TASK-008B", "TASK-008C"}
         | {f"TASK-{number:03d}" for number in range(9, 17)}
-        | {f"TASK-{number}" for number in range(100, 122)}
+        | {f"TASK-{number}" for number in range(100, 117)}
     )
     allowed = {
         "COMPLETE_VERIFIED",
@@ -73,7 +73,7 @@ def _load_reviewed_completion_state(path: Path = base.COMPLETION_STATE) -> dict[
 
 
 def hardened_authoritative_next_required_task(path: Path = base.COMPLETION_STATE) -> str | None:
-    """Validate the reviewed roadmap universe through the TASK-121 plan."""
+    """Validate the reviewed roadmap universe through the read-only TASK-116 gate."""
     document = _load_reviewed_completion_state(path)
     return next((entry["id"] for entry in document["tasks"] if entry["status"] != "COMPLETE_VERIFIED"), None)
 

@@ -8,7 +8,7 @@ to crash the autonomous process.
 
 It also consumes a bounded local routing override produced by the 24x7 legacy-
 governor recovery layer, extends the checked-in roadmap scheduler through the
-post-TASK-116 planned roadmap, and exposes the fixed production
+read-only TASK-116 reconciliation gate, and exposes the fixed production
 lifecycle bridge only for the explicitly authorized production-mutation tasks.
 """
 from __future__ import annotations
@@ -74,13 +74,13 @@ def _production_task(task: object) -> bool:
 
 
 def hardened_load_foundation_completion_state(path=None) -> dict[str, Any]:
-    """Fail-closed roadmap loader through the reviewed TASK-121 roadmap.
+    """Fail-closed roadmap loader extended through the read-only TASK-116 gate.
 
     The base supervisor intentionally recognizes a fixed reviewed task set.  The
     24x7 wrapper owns the post-115 extension so the large reviewed base module
-    does not need an unrelated rewrite. `_production_task()` deliberately
-    remains capped at TASK-115, so a future task must receive an explicit
-    reviewed production authorization before the fixed bridge is exposed.
+    does not need an unrelated rewrite.  TASK-116 is scheduling authority only;
+    `_production_task()` deliberately remains capped at TASK-115, therefore the
+    fixed production mutation bridge is not exposed for this reconciliation.
     """
     path = base.FOUNDATION_COMPLETION_STATE if path is None else path
     try:
@@ -97,7 +97,7 @@ def hardened_load_foundation_completion_state(path=None) -> dict[str, Any]:
         task_id = entry.get("id") if isinstance(entry, dict) else None
         status = entry.get("status") if isinstance(entry, dict) else None
         if not isinstance(task_id, str) or not re.fullmatch(
-            r"TASK-(?:0(?:0[0-9]|1[0-6]|08[A-C])|1(?:0[0-9]|1[0-9]|20|21))", task_id
+            r"TASK-(?:0(?:0[0-9]|1[0-6]|08[A-C])|1(?:0[0-9]|1[0-6]))", task_id
         ):
             raise base.AppServerError(f"foundation_completion_state_invalid: invalid task id {task_id!r}")
         if task_id in seen:
@@ -114,7 +114,7 @@ def hardened_load_foundation_completion_state(path=None) -> dict[str, Any]:
         {f"TASK-{number:03d}" for number in range(9)}
         | {"TASK-008A", "TASK-008B", "TASK-008C"}
         | {f"TASK-{number:03d}" for number in range(9, 17)}
-        | {f"TASK-{number}" for number in range(100, 122)}
+        | {f"TASK-{number}" for number in range(100, 117)}
     )
     if seen != expected:
         raise base.AppServerError(
