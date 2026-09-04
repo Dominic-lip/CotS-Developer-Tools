@@ -42,7 +42,7 @@
     {"id":"TASK-117","status":"COMPLETE_VERIFIED","evidence":["Docs/Production/Reuse/TASK-117.md: donor classifications and adapted server-only observability boundary","Docs/Validation/TASK-117_OPERATIONS_PROOF.md: production editor/game/server builds and focused Unreal authority, persistence/migration, audit and failure-injection proof","Production commit c5a9619: operations observability subsystem and automation"]},
     {"id":"TASK-118","status":"COMPLETE_VERIFIED","evidence":["Docs/Production/Reuse/TASK-118.md: TASK-101/103 adaptation decision","Docs/Validation/TASK-118_SCALE_SOAK_RECOVERY_PROOF.md: four-worker resource, recovery and build evidence","Production commit ccba97a: scale/soak recovery automation"]},
     {"id":"TASK-119","status":"COMPLETE_VERIFIED","evidence":["Docs/Production/Reuse/TASK-119.md: peer-access and adapter decision","Docs/Validation/TASK-119_PLATFORM_SECURITY_PROOF.md: token-free security proof and builds","Production commit 3633fd0: platform security adapter"]},
-    {"id":"TASK-120","status":"NOT_STARTED"},
+    {"id":"TASK-120","status":"PARTIAL","evidence":["Docs/Production/Reuse/TASK-120.md: TASK-114 adaptation and credential boundary","Docs/Validation/TASK-120_VOICE_PRIVACY_PROOF.md: provider-unavailable privacy proof and remaining real-provider gate","Production commit c46a188: local voice privacy boundary"]},
     {"id":"TASK-121","status":"NOT_STARTED"}
   ]
 }
