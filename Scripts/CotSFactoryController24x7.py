@@ -81,13 +81,14 @@ def hardened_authoritative_next_required_task(path: Path = base.COMPLETION_STATE
 def reconcile_completed_checkpoint(
     checkpoint: dict[str, Any], path: Path = base.COMPLETION_STATE,
 ) -> tuple[dict[str, Any], bool]:
-    """Retire task-local runtime state once durable evidence already completed it.
+    """Retire stale task-local runtime state when the reviewed scheduler moved on.
 
     A persisted provider thread, handoff, or compact context from a completed
-    task must never outrank the checked-in scheduler after restart.  Preserve
-    cumulative counters and provider-capacity metadata, but force a fresh
-    provider session for the next reviewed task and discard only operational
-    debt that belongs to already verified tasks.
+    task -- or from an unreviewed task that is no longer present in the
+    fail-closed completion state -- must never outrank the checked-in scheduler
+    after restart. Preserve cumulative counters and provider-capacity metadata,
+    but force a fresh provider session for the next reviewed task and discard
+    operational debt that belongs to completed or unreviewed tasks.
     """
     if not isinstance(checkpoint, dict):
         return {}, False
@@ -101,7 +102,10 @@ def reconcile_completed_checkpoint(
         or compact.get("task_id")
         or ""
     )
-    if not scheduled or not current or current == scheduled or statuses.get(current) != "COMPLETE_VERIFIED":
+    if not scheduled or not current or current == scheduled:
+        return dict(checkpoint), False
+    current_status = statuses.get(current)
+    if current_status not in {None, "COMPLETE_VERIFIED"}:
         return dict(checkpoint), False
 
     result = dict(checkpoint)
@@ -140,16 +144,16 @@ def reconcile_completed_checkpoint(
     if isinstance(queue, list):
         result["deferred_verifications"] = [
             entry for entry in queue
-            if not (
+            if (
                 isinstance(entry, dict)
-                and statuses.get(str(entry.get("task_id") or "")) == "COMPLETE_VERIFIED"
+                and statuses.get(str(entry.get("task_id") or "")) not in {None, "COMPLETE_VERIFIED"}
             )
         ]
     return result, True
 
 
 def hardened_start_supervisor(self: Any, prompt: str | None = None, agents: str = "codex,claude") -> None:
-    """Reconcile a completed stale checkpoint before a normal scheduler start."""
+    """Reconcile a stale or unreviewed checkpoint before a normal scheduler start."""
     if prompt is None:
         checkpoint = base.read_json(base.SUPERVISOR_STATE, {})
         previous_task = str(checkpoint.get("task") or "") if isinstance(checkpoint, dict) else ""
@@ -157,12 +161,12 @@ def hardened_start_supervisor(self: Any, prompt: str | None = None, agents: str 
         if changed:
             base.atomic_json(base.SUPERVISOR_STATE, reconciled)
             self.save(
-                f"Reconciled completed checkpoint {previous_task or 'unknown'} -> {reconciled.get('task')}",
+                f"Reconciled stale checkpoint {previous_task or 'unknown'} -> {reconciled.get('task')}",
                 supervisor_state="RECONCILING",
             )
             telemetry.emit(
                 "STALE_TASK_CHECKPOINT_RECONCILED",
-                f"Retired completed checkpoint {previous_task or 'unknown'} before scheduling {reconciled.get('task')}",
+                f"Retired stale checkpoint {previous_task or 'unknown'} before scheduling {reconciled.get('task')}",
                 previous_task=previous_task or None,
                 scheduled_task=reconciled.get("task"),
             )
