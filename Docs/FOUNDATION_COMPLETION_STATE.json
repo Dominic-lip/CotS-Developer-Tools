@@ -39,7 +39,7 @@
     {"id":"TASK-114","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-114_SOCIAL_COMMUNICATION_PROOF.md: production build and Unreal automation","Production commit 6992919: social communication authority"]},
     {"id":"TASK-115","status":"COMPLETE_VERIFIED","evidence":["Docs/Validation/TASK-115_VERTICAL_SLICE_GATE.md: aggregate, multiplayer, build and smoke results","Docs/Production/TASK-115_NEXT_BACKLOG.md: observed engineering gaps"]},
     {"id":"TASK-116","status":"COMPLETE_VERIFIED","evidence":["Docs/Production/TASK-116_RECONCILIATION_BASELINE.md: read-only current-state, development-shard 115-119, peer-access, capability and TASK-115-backlog reconciliation","Docs/Production/Reuse/TASK-116.md: source-path/revision-backed reuse classifications","Docs/Production/TASK-116_NEXT_ROADMAP.md: dependency-ordered authorization-ready TASK-117 through TASK-121 proposals"]},
-    {"id":"TASK-117","status":"PARTIAL","evidence":["Docs/Production/Reuse/TASK-117.md: donor classifications and bounded production manifest","Docs/Validation/TASK-117_OPERATIONS_BLOCKED_2026-09-04.md: fixed-adapter production write and build blockers"]},
+    {"id":"TASK-117","status":"COMPLETE_VERIFIED","evidence":["Docs/Production/Reuse/TASK-117.md: donor classifications and adapted server-only observability boundary","Docs/Validation/TASK-117_OPERATIONS_PROOF.md: production editor/game/server builds and focused Unreal authority, persistence/migration, audit and failure-injection proof","Production commit c5a9619: operations observability subsystem and automation"]},
     {"id":"TASK-118","status":"NOT_STARTED"},
     {"id":"TASK-119","status":"NOT_STARTED"},
     {"id":"TASK-120","status":"NOT_STARTED"},

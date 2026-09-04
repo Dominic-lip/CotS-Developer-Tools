@@ -24,8 +24,17 @@
 
 ## Current implementation checkpoint
 
-`task-117-operations.json` is a bounded manifest for a new server-only
-observability subsystem and its focused automation test. It has not been
-applied: the fixed `CotSProductionLifecycleCampaign.py apply-manifest` operation
-returned `WinError 5` for the destination production directory. No source was
-written, compiled, or staged in `C:\Dev\CotS`.
+Production commit `c5a9619` adapts the donor concepts as a bounded server-only
+observability subsystem. It keeps accepted envelopes in a deduplicated event
+store, uses stable event IDs, server Unix milliseconds, trace IDs and opaque
+hierarchical region IDs, and never exposes diagnostic state to an
+unprivileged caller. The persistence seam exports/restores only accepted
+versioned envelopes; restoration is authoritative-only, migrates schema zero,
+rejects future/invalid schemas atomically, and therefore does not become a
+competing gameplay authority store.
+
+`task-117-operations.json` and its persistence follow-up manifest were applied
+only through the fixed campaign lifecycle adapter. The focused Unreal test
+exercises authorization rejection, accepted identity deduplication,
+export/authoritative restore, schema migration, invalid restore safety,
+privileged audit visibility, and failure-injection alert accounting.
