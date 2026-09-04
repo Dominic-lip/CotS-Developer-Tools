@@ -2,8 +2,9 @@
 """Continuous campaign watchdog.
 
 Uses the production 24x7 watchdog but routes factory work through the reviewed
-campaign wrappers and treats an authoritatively completed campaign as an idle
-terminal state, never as a recoverable failure.
+campaign wrappers, owns the loopback host-side production lifecycle bridge, and
+treats an authoritatively completed campaign as an idle terminal state rather
+than a recoverable failure.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from typing import Any
 
 import CotSWatchdog24x7Final as final
 from CotS24x7Common import FACTORY_STATE, SUPERVISOR_STATE, atomic_json, read_json
+from CotSProductionHostBridge import ProductionHostBridge
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "Scripts"
@@ -58,7 +60,24 @@ def mark_factory_complete() -> None:
 
 
 class CampaignWatchdog(final.ProductionWatchdog):
-    """Never spend provider quota or run FixIt after real campaign completion."""
+    """Persistent campaign plus host-side production execution boundary."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.production_host = ProductionHostBridge()
+
+    def run(self) -> int:
+        self.production_host.start()
+        self.telemetry.emit(
+            "PRODUCTION_HOST_READY",
+            "Loopback production lifecycle bridge is online under the watchdog host identity",
+            host="127.0.0.1",
+            port=8011,
+        )
+        try:
+            return int(super().run())
+        finally:
+            self.production_host.stop()
 
     def monitor_factory(self, before: dict[str, Any], started: float) -> tuple[int, float, bool, str | None]:
         exit_code, runtime, progressed, control = super().monitor_factory(before, started)
