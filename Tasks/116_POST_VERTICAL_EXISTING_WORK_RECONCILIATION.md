@@ -16,11 +16,27 @@ This task is a **read-only reconciliation gate** for all game/donor/peer reposit
 
 Do not turn this audit into a wholesale migration. Implementation/migration belongs in explicitly authorized follow-on tasks after this gate establishes what is actually required.
 
+## Mandatory shard-identifier disambiguation
+
+`Shard 115`, `Shard 116`, `Shard 117`, `Shard 118`, and `Shard 119` in this task mean the **Shardlands development shards/slices used by this project**, not unrelated numbered feature-catalogue entries, design ideas, backlog numbers, property features, housing features, or any other numeric catalogue.
+
+Before classifying any numbered shard, prove the identity from repository evidence such as shard documents, source paths, branch/commit history, module names, tests, or files that implement the expected domain. A numeric match alone is never evidence.
+
+The expected domains that must be searched for and either confirmed or explicitly disproven are:
+
+- **Shard 115:** embodied player, MetaHuman, animation, input/presentation work.
+- **Shard 116:** world simulation fabric, including weather/ecology/resources/settlements/markets/law/knowledge/strategic movement/routes/persistence orchestration and related simulation infrastructure.
+- **Shard 117:** gameplay event bus / world-to-gameplay event integration and related simulation-event handoff.
+- **Shard 118:** world authoring toolkit, including terrain/water/biomes/roads/rivers/settlements/no-spawn masks/macro authoring or their current equivalents.
+- **Shard 119:** discover the actual current implementation from repository evidence; prior planning suggested climate/hydrology/biome integration with event bus/persistence/streaming, but that suggestion is not authoritative if the repository shows something else.
+
+If a `feature catalogue` or other numbered list also contains entries 115–119, record it only as a separate source and do **not** substitute it for the development shards above.
+
 ## Required inspection
 
 1. Reconcile the current `C:\Dev\CotS` revision, worktree state, TASK-101 through TASK-115 implementation/evidence, and actual subsystem boundaries.
 2. Reconcile the freshest local `C:\Dev\Shardlands` state. Treat local files and Git status as potentially newer than remote history without modifying them.
-3. Deepen the existing-work index specifically around Shards 115–119:
+3. Deepen the existing-work index specifically around the **development Shards 115–119**, applying the disambiguation rule above:
    - Shard 115 — embodied player / MetaHuman / animation / input work.
    - Shard 116 — world simulation fabric.
    - Shard 117 — gameplay/event integration.
@@ -46,7 +62,7 @@ Record whether the capability is already present in CotS production separately f
 
 Create/update durable evidence under `Docs/Production/` including:
 
-1. `TASK-116_RECONCILIATION_BASELINE.md` — exact source revisions/freshness, current CotS capability matrix, Shards 115–119 map, peer-contract map, dependencies, duplicates/conflicts and missing glue.
+1. `TASK-116_RECONCILIATION_BASELINE.md` — exact source revisions/freshness, current CotS capability matrix, development Shards 115–119 map, peer-contract map, dependencies, duplicates/conflicts and missing glue.
 2. `Reuse/TASK-116.md` — evidence-backed reuse/adapt/reimplement/reference/leave decisions.
 3. `TASK-116_NEXT_ROADMAP.md` — prioritized authorization-ready TASK-117+ proposals mapped back to the observed TASK-115 P0/P1 backlog and to already-existing work.
 4. Update `Docs/Production/EXISTING_WORK_INDEX.md` only where TASK-116 establishes materially newer or more precise facts.
@@ -57,7 +73,8 @@ Create/update durable evidence under `Docs/Production/` including:
 TASK-116 is `COMPLETE_VERIFIED` only when all of the following are durable and inspectable:
 
 - exact reachable revision/freshness evidence for CotS production, local Shardlands, and each reachable peer repository;
-- an evidence-backed map of the actual Shards 115, 116, 117, 118 and 119 implementations;
+- an evidence-backed map of the actual **development Shards 115, 116, 117, 118 and 119** implementations, with concrete repository paths/revisions or an explicit evidence-backed finding that a given expected domain is absent;
+- evidence for Shards 116–118 addresses the expected world-simulation, gameplay-event and world-authoring domains above rather than substituting same-numbered catalogue entries;
 - an evidence-backed Website / Platform API integration-contract map, or an exact recorded access limitation for any still-unreachable peer;
 - a current CotS production capability/dependency matrix reconciled against TASK-101..115;
 - significant donor/peer material classified under the existing reuse policy with paths/revisions/confidence;
@@ -65,5 +82,7 @@ TASK-116 is `COMPLETE_VERIFIED` only when all of the following are durable and i
 - the TASK-115 P0/P1 backlog reconciled against existing work rather than blindly copied forward;
 - a dependency-ordered TASK-117+ roadmap that says what should be implemented next and why;
 - proof that TASK-116 made no writes to Shardlands, CotS production, Website, Platform API, CotS-Game, or other donor/peer repositories.
+
+A TASK-116 completion attempt is invalid if it relies on numeric feature-catalogue matches as substitutes for the development shards or if any required deliverable above is missing.
 
 If a source cannot be inspected, record the concrete access failure and continue with independent evidence where possible. Do not invent absent repository contents.
