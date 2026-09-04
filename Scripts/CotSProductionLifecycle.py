@@ -18,6 +18,7 @@ import re
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -49,6 +50,10 @@ COMBAT_AUTOMATION_TEST = "CotS.Combat.Authority.IntentValidation"
 WORLD_AUTHORING_AUTOMATION_TEST = "CotS.World.Authoring.RecipeValidation"
 SOCIAL_COMMUNICATION_AUTOMATION_TEST = "CotS.Social.Communication.AuthorityPolicy"
 OPERATIONS_AUTOMATION_TEST = "CotS.Operations.EventObservability.AuthorityAuditFailureInjection"
+SCALE_SOAK_NETWORK_AUTOMATION_TEST = "CotS.Runtime.ScaleSoak.FourParticipantRecovery"
+SCALE_SOAK_PERSISTENCE_AUTOMATION_TEST = "CotS.ScaleSoak.PersistenceRecovery"
+SCALE_SOAK_WORKER_COUNT = 4
+SCALE_SOAK_MAX_WORKING_SET_BYTES = 12 * 1024 * 1024 * 1024
 TASK_118_SOURCE_FILES = (
     "Source/CotS/Public/Net/CotSNetworkProbeActor.h",
     "Source/CotS/Private/Net/CotSNetworkProbeActor.cpp",
@@ -132,6 +137,32 @@ def _write_state(**fields: Any) -> None:
 def _pid_live(pid: object) -> bool:
     if not isinstance(pid, int) or pid <= 0:
         return False
+
+
+def _process_resource_usage(pid: int) -> dict[str, int]:
+    """Read only the fixed worker's CPU time and working set on Windows."""
+    if os.name != "nt":
+        return {"cpu_100ns": 0, "working_set_bytes": 0}
+    handle = ctypes.windll.kernel32.OpenProcess(0x1000 | 0x0010, False, pid)
+    if not handle:
+        return {"cpu_100ns": 0, "working_set_bytes": 0}
+    try:
+        class FILETIME(ctypes.Structure):
+            _fields_ = [("dwLowDateTime", ctypes.c_ulong), ("dwHighDateTime", ctypes.c_ulong)]
+        class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+            _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong), ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t), ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t), ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t), ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t), ("PrivateUsage", ctypes.c_size_t)]
+        creation, exit_time, kernel, user = FILETIME(), FILETIME(), FILETIME(), FILETIME()
+        cpu = 0
+        if ctypes.windll.kernel32.GetProcessTimes(handle, ctypes.byref(creation), ctypes.byref(exit_time), ctypes.byref(kernel), ctypes.byref(user)):
+            cpu = ((kernel.dwHighDateTime << 32) | kernel.dwLowDateTime) + ((user.dwHighDateTime << 32) | user.dwLowDateTime)
+        counters = PROCESS_MEMORY_COUNTERS_EX()
+        counters.cb = ctypes.sizeof(counters)
+        working_set = 0
+        if ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            working_set = int(counters.WorkingSetSize)
+        return {"cpu_100ns": int(cpu), "working_set_bytes": working_set}
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
     if os.name == "nt":
         handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
         if not handle:
@@ -971,6 +1002,125 @@ def networked_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     }
 
 
+def scale_soak_automation(timeout_seconds: int = 600) -> dict[str, Any]:
+    """Run TASK-118's fixed four-participant load and recovery automation.
+
+    Worker count, test names, project and command lines are deliberately fixed;
+    callers can adjust only the bounded timeout.  The local hardware guard
+    rejects a run before process launch when the host cannot safely support the
+    reviewed four-worker configuration.
+    """
+    if status().get("editor_running"):
+        raise Refused("close the production editor before running scale/soak automation")
+    if not PROJECT.is_file() or not EDITOR.is_file() or not EDITOR_CMD.is_file():
+        raise Refused("production project or UE 5.8 editor executable is missing")
+    if (os.cpu_count() or 0) < SCALE_SOAK_WORKER_COUNT:
+        raise Refused("local hardware safety guard requires at least four logical CPUs for TASK-118")
+
+    session_id = str(uuid.uuid4())
+    session_arg = f"-SessionId={session_id}"
+    session_name_arg = "-SessionName=CotS-TASK118"
+    mcp_override = "-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False"
+    worker_command = [
+        str(EDITOR), str(PROJECT), "-game", "-messaging", "-Multiprocess",
+        session_arg, session_name_arg, mcp_override,
+        "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound",
+    ]
+    workers = [
+        subprocess.Popen(worker_command, cwd=PRODUCTION, creationflags=NEW_PROCESS_GROUP)
+        for _ in range(SCALE_SOAK_WORKER_COUNT)
+    ]
+    _write_state(last_operation="scale-soak-automation-starting", scale_soak_worker_pids=[worker.pid for worker in workers])
+    started = time.monotonic()
+    baseline_cpu = sum(_process_resource_usage(worker.pid)["cpu_100ns"] for worker in workers)
+    resources = {"peak_working_set_bytes": 0, "last_cpu_100ns": baseline_cpu, "guard_triggered": False}
+    monitoring = threading.Event()
+
+    def sample_workers() -> None:
+        while not monitoring.is_set():
+            usage = [_process_resource_usage(worker.pid) for worker in workers if worker.poll() is None]
+            resources["peak_working_set_bytes"] = max(resources["peak_working_set_bytes"], sum(item["working_set_bytes"] for item in usage))
+            resources["last_cpu_100ns"] = sum(item["cpu_100ns"] for item in usage)
+            if resources["peak_working_set_bytes"] > SCALE_SOAK_MAX_WORKING_SET_BYTES:
+                resources["guard_triggered"] = True
+                for worker in workers:
+                    if worker.poll() is None:
+                        worker.terminate()
+                return
+            monitoring.wait(0.25)
+
+    monitor = threading.Thread(target=sample_workers, name="CotSTask118ResourceMonitor", daemon=True)
+    monitor.start()
+    try:
+        time.sleep(5)
+        network_result = _run(
+            [
+                str(EDITOR_CMD), str(PROJECT), "-messaging", "-Multiprocess",
+                session_arg, session_name_arg, mcp_override,
+                f"-ExecCmds=Automation RunTests {SCALE_SOAK_NETWORK_AUTOMATION_TEST};Quit",
+                "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound",
+            ],
+            cwd=PRODUCTION, timeout=max(120, min(1800, int(timeout_seconds))), creationflags=NEW_PROCESS_GROUP,
+        )
+        network_log = (PRODUCTION / "Saved" / "Logs" / "CotS.log").read_text(encoding="utf-8", errors="replace")[-50000:]
+    finally:
+        monitoring.set()
+        monitor.join(timeout=2)
+        for worker in workers:
+            if worker.poll() is None:
+                worker.terminate()
+        for worker in workers:
+            try:
+                worker.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
+
+    workers_cleaned = all(worker.poll() is not None for worker in workers)
+    persistence_result = _run(
+        [
+            str(EDITOR_CMD), str(PROJECT), mcp_override,
+            f"-ExecCmds=Automation RunTests {SCALE_SOAK_PERSISTENCE_AUTOMATION_TEST};Quit",
+            "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound",
+        ],
+        cwd=PRODUCTION, timeout=max(120, min(1200, int(timeout_seconds))), creationflags=NEW_PROCESS_GROUP,
+    )
+    persistence_log = (PRODUCTION / "Saved" / "Logs" / "CotS.log").read_text(encoding="utf-8", errors="replace")[-50000:]
+    persistence_metric_present = any("TASK118_METRIC persistence_writes=32 event_writes=64" in line for line in persistence_log.splitlines())
+    successful = (
+        workers_cleaned and network_result["exit_code"] == 0 and persistence_result["exit_code"] == 0
+        and "Automation Test Failed" not in network_log
+        and "Automation Test Failed" not in persistence_log
+        and persistence_metric_present
+        and not resources["guard_triggered"]
+    )
+    duration_ms = int((time.monotonic() - started) * 1000)
+    cpu_seconds = max(0.0, (resources["last_cpu_100ns"] - baseline_cpu) / 10_000_000.0)
+    cpu_percent = (cpu_seconds / max(0.001, duration_ms / 1000.0)) * 100.0
+    _write_state(
+        last_operation="scale-soak-automation", scale_soak_exit_code=0 if successful else 1,
+        scale_soak_worker_pids=[] if workers_cleaned else [worker.pid for worker in workers if worker.poll() is None],
+    )
+    return {
+        "success": successful,
+        "network_test": SCALE_SOAK_NETWORK_AUTOMATION_TEST,
+        "persistence_test": SCALE_SOAK_PERSISTENCE_AUTOMATION_TEST,
+        "worker_count": SCALE_SOAK_WORKER_COUNT,
+        "workers_cleaned": workers_cleaned,
+        "duration_ms": duration_ms,
+        "resource_sample": {
+            "peak_working_set_bytes": resources["peak_working_set_bytes"],
+            "aggregate_worker_cpu_seconds": round(cpu_seconds, 3),
+            "aggregate_worker_cpu_percent": round(cpu_percent, 2),
+            "memory_guard_bytes": SCALE_SOAK_MAX_WORKING_SET_BYTES,
+            "memory_guard_triggered": resources["guard_triggered"],
+        },
+        "network": network_result,
+        "persistence": persistence_result,
+        "automation_log_verified": persistence_metric_present,
+        "metrics": [line for line in network_log.splitlines() + persistence_log.splitlines() if "TASK118_METRIC" in line],
+    }
+
+
 def platform_identity_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     """Run TASK-102's exact token-free identity contract automation test.
 
@@ -1279,6 +1429,7 @@ def main() -> int:
     build_parser = sub.add_parser("build"); build_parser.add_argument("--target", choices=("editor", "game", "server"), default="editor"); build_parser.add_argument("--timeout", type=int, default=1800)
     smoke_parser = sub.add_parser("smoke"); smoke_parser.add_argument("--timeout", type=int, default=300)
     network_parser = sub.add_parser("networked-automation"); network_parser.add_argument("--timeout", type=int, default=300)
+    soak_parser = sub.add_parser("scale-soak-automation"); soak_parser.add_argument("--timeout", type=int, default=600)
     identity_parser = sub.add_parser("platform-identity-automation"); identity_parser.add_argument("--timeout", type=int, default=300)
     persistence_parser = sub.add_parser("persistence-automation"); persistence_parser.add_argument("--timeout", type=int, default=300)
     embodiment_parser = sub.add_parser("embodiment-automation"); embodiment_parser.add_argument("--timeout", type=int, default=300)
@@ -1318,6 +1469,7 @@ def main() -> int:
         elif args.operation == "build": value = build(args.target, args.timeout)
         elif args.operation == "smoke": value = smoke(args.timeout)
         elif args.operation == "networked-automation": value = networked_automation(args.timeout)
+        elif args.operation == "scale-soak-automation": value = scale_soak_automation(args.timeout)
         elif args.operation == "platform-identity-automation": value = platform_identity_automation(args.timeout)
         elif args.operation == "persistence-automation": value = persistence_automation(args.timeout)
         elif args.operation == "embodiment-automation": value = embodiment_automation(args.timeout)
