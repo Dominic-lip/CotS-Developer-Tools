@@ -49,6 +49,18 @@ COMBAT_AUTOMATION_TEST = "CotS.Combat.Authority.IntentValidation"
 WORLD_AUTHORING_AUTOMATION_TEST = "CotS.World.Authoring.RecipeValidation"
 SOCIAL_COMMUNICATION_AUTOMATION_TEST = "CotS.Social.Communication.AuthorityPolicy"
 OPERATIONS_AUTOMATION_TEST = "CotS.Operations.EventObservability.AuthorityAuditFailureInjection"
+TASK_118_SOURCE_FILES = (
+    "Source/CotS/Public/Net/CotSNetworkProbeActor.h",
+    "Source/CotS/Private/Net/CotSNetworkProbeActor.cpp",
+    "Source/CotS/Private/Tests/CotSNetworkedAutomationTests.cpp",
+    "Source/CotS/Public/Persistence/CotSPersistence.h",
+    "Source/CotS/Private/Persistence/CotSPersistence.cpp",
+    "Source/CotS/Private/Tests/CotSPersistenceTests.cpp",
+    "Source/CotS/Public/Operations/CotSOperationsObservabilitySubsystem.h",
+    "Source/CotS/Private/Operations/CotSOperationsObservabilitySubsystem.cpp",
+    "Source/CotS/Private/Tests/CotSOperationsObservabilityTests.cpp",
+)
+TASK_118_SOURCE_MAX_BYTES = 512 * 1024
 VERTICAL_SLICE_AUTOMATION_TESTS = (
     PLATFORM_IDENTITY_AUTOMATION_TEST, PERSISTENCE_AUTOMATION_TEST,
     EMBODIMENT_AUTOMATION_TEST, INVENTORY_AUTOMATION_TEST, SPATIAL_AUTOMATION_TEST,
@@ -404,6 +416,36 @@ def status() -> dict[str, Any]:
         "editor_pid": pid if editor_running else None,
         "mcp_ready": _mcp_ready() if editor_running else False,
         "state": state,
+    }
+
+
+def task_118_source_diagnostics() -> dict[str, Any]:
+    """Return the bounded TASK-118 production source slice through the host bridge.
+
+    This is intentionally a no-argument, read-only operation.  It exposes only
+    the runtime/persistence contracts and automation fixtures that TASK-118 may
+    extend, so a provider never needs a direct production filesystem read.
+    """
+    if not PROJECT.is_file():
+        raise Refused("production project is missing")
+    sources: dict[str, str] = {}
+    total = 0
+    for relative_path in TASK_118_SOURCE_FILES:
+        path = _safe_relpath(relative_path)
+        if not path.is_file():
+            raise Refused(f"TASK-118 required source is missing: {relative_path}")
+        content = path.read_text(encoding="utf-8", errors="replace")
+        encoded_size = len(content.encode("utf-8"))
+        if total + encoded_size > TASK_118_SOURCE_MAX_BYTES:
+            raise Refused("TASK-118 bounded source diagnostic exceeds its reviewed payload limit")
+        total += encoded_size
+        sources[path.relative_to(PRODUCTION).as_posix()] = content
+    return {
+        "success": True,
+        "task": "TASK-118",
+        "source_files": list(TASK_118_SOURCE_FILES),
+        "source_bytes": total,
+        "sources": sources,
     }
 
 
@@ -1221,6 +1263,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="operation", required=True)
     sub.add_parser("status")
+    sub.add_parser("task-118-source-diagnostics")
     sub.add_parser("mcp-diagnostics")
     sub.add_parser("mcp-toolset-diagnostics")
     sub.add_parser("mcp-meta-tools")
@@ -1259,6 +1302,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.operation == "status": value = status()
+        elif args.operation == "task-118-source-diagnostics": value = task_118_source_diagnostics()
         elif args.operation == "mcp-diagnostics": value = mcp_diagnostics()
         elif args.operation == "mcp-toolset-diagnostics": value = mcp_toolset_diagnostics()
         elif args.operation == "mcp-meta-tools": value = mcp_meta_tools()
