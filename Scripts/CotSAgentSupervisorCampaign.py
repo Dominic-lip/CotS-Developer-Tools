@@ -17,11 +17,12 @@ CAMPAIGN_FIRST_TASK = 117
 CAMPAIGN_LAST_TASK = 121
 
 PRODUCTION_ADAPTER_INSTRUCTIONS = rf"""
-For TASK-015 and TASK-100 through TASK-{CAMPAIGN_LAST_TASK} only, the scheduled
-task itself is explicit authorization to modify C:\Dev\CotS within that task's
-stated scope. C:\Dev\Shardlands remains strictly read-only. Website, Platform
-API and other peer repositories remain read-only unless a later task explicitly
-names and authorizes a peer mutation.
+For TASK-015, TASK-100 through TASK-115, and TASK-{CAMPAIGN_FIRST_TASK} through
+TASK-{CAMPAIGN_LAST_TASK} only, the scheduled task itself is explicit
+authorization to modify C:\Dev\CotS within that task's stated scope. TASK-116
+remains a completed read-only reconciliation gate. C:\Dev\Shardlands remains
+strictly read-only. Website, Platform API and other peer repositories remain
+read-only unless a later task explicitly names and authorizes a peer mutation.
 
 All production host/filesystem/build/Git work must use the fixed audited command
 `python Scripts/CotSProductionLifecycleCampaign.py ...`; do not substitute
@@ -36,7 +37,10 @@ def campaign_production_task(task: object) -> bool:
     if value == "TASK-015":
         return True
     match = re.fullmatch(r"TASK-(\d{3})", value)
-    return bool(match and 100 <= int(match.group(1)) <= CAMPAIGN_LAST_TASK)
+    if not match:
+        return False
+    number = int(match.group(1))
+    return 100 <= number <= 115 or CAMPAIGN_FIRST_TASK <= number <= CAMPAIGN_LAST_TASK
 
 
 def campaign_load_completion_state(path=None) -> dict[str, Any]:
