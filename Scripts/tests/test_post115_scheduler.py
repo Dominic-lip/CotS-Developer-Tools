@@ -12,6 +12,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import CotSAgentSupervisor24x7 as sup24
+import CotSFactoryController24x7 as fac24
 
 
 class TestTask116Scheduler(unittest.TestCase):
@@ -23,6 +24,7 @@ class TestTask116Scheduler(unittest.TestCase):
         self.assertEqual(sup24.base.next_required_task(), "TASK-116")
         instruction = sup24.hardened_scheduled_task_instruction()
         self.assertIn("TASK-116", instruction)
+        self.assertEqual(fac24.hardened_authoritative_next_required_task(), "TASK-116")
 
     def test_task_116_does_not_receive_production_mutation_bridge(self) -> None:
         self.assertFalse(sup24._production_task("TASK-116"))
@@ -61,6 +63,55 @@ class TestTask116Scheduler(unittest.TestCase):
             path.write_text(json.dumps(document), encoding="utf-8")
             with self.assertRaises(sup24.base.AppServerError):
                 sup24.hardened_load_foundation_completion_state(path)
+
+    def test_completed_checkpoint_is_reconciled_to_task_116(self) -> None:
+        checkpoint = {
+            "state": "GOVERNOR_PAUSED",
+            "task": "TASK-013",
+            "phase": "PROVIDER_ACCEPTANCE_PROOF",
+            "scheduled_task": "TASK-116",
+            "active_task_override": "TASK-013",
+            "active_agent": "codex",
+            "pending_handoff_target": "claude",
+            "turn_count": 41,
+            "compact_task_context": {"task_id": "TASK-013", "phase": "PROVIDER_ACCEPTANCE_PROOF"},
+            "codex": {"status": "ACTIVE", "thread_id": "old-codex-thread", "reset_at": None},
+            "claude": {"status": "IDLE", "session_id": "old-claude-session"},
+            "deferred_verifications": [
+                {"task_id": "TASK-013", "required_provider": "claude"},
+            ],
+            "human_gate": "old gate",
+            "failure": "old failure",
+        }
+        reconciled, changed = fac24.reconcile_completed_checkpoint(checkpoint)
+        self.assertTrue(changed)
+        self.assertEqual(reconciled["state"], "STARTING")
+        self.assertEqual(reconciled["task"], "TASK-116")
+        self.assertEqual(reconciled["phase"], "RECONCILING")
+        self.assertEqual(reconciled["scheduled_task"], "TASK-116")
+        self.assertEqual(reconciled["turn_count"], 41)
+        self.assertIsNone(reconciled["active_agent"])
+        self.assertIsNone(reconciled["pending_handoff_target"])
+        self.assertIsNone(reconciled["active_task_override"])
+        self.assertNotIn("thread_id", reconciled["codex"])
+        self.assertNotIn("session_id", reconciled["claude"])
+        self.assertEqual(reconciled["deferred_verifications"], [])
+        self.assertNotIn("human_gate", reconciled)
+        self.assertNotIn("failure", reconciled)
+        self.assertEqual(reconciled["compact_task_context"]["task_id"], "TASK-116")
+
+    def test_current_incomplete_checkpoint_is_preserved(self) -> None:
+        checkpoint = {
+            "state": "RUNNING_CODEX",
+            "task": "TASK-116",
+            "phase": "source inventory",
+            "active_agent": "codex",
+            "compact_task_context": {"task_id": "TASK-116", "phase": "source inventory"},
+            "codex": {"status": "ACTIVE", "thread_id": "current-thread"},
+        }
+        reconciled, changed = fac24.reconcile_completed_checkpoint(checkpoint)
+        self.assertFalse(changed)
+        self.assertEqual(reconciled, checkpoint)
 
 
 if __name__ == "__main__":
