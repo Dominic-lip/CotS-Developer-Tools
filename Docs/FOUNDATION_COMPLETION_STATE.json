@@ -242,30 +242,6 @@
     },
     {
       "id": "TASK-116",
-      "status": "COMPLETE_VERIFIED",
-      "evidence": [
-        "Docs/Validation/TASK-116_POST_VERTICAL_SLICE_RECONCILIATION.md: read-only CotS/Shardlands/peer capability, dependency and reuse matrix",
-        "Docs/PRODUCTION_ROADMAP.md: TASK-117 through TASK-121 sequenced roadmap"
-      ]
-    },
-    {
-      "id": "TASK-117",
-      "status": "NOT_STARTED"
-    },
-    {
-      "id": "TASK-118",
-      "status": "NOT_STARTED"
-    },
-    {
-      "id": "TASK-119",
-      "status": "NOT_STARTED"
-    },
-    {
-      "id": "TASK-120",
-      "status": "NOT_STARTED"
-    },
-    {
-      "id": "TASK-121",
       "status": "NOT_STARTED"
     }
   ]
