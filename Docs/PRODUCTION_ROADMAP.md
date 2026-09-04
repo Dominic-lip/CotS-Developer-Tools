@@ -58,5 +58,20 @@ Prove an end-to-end multiplayer slice across identity, server authority, persist
 ### TASK-116 — Post-Vertical-Slice Existing-Work Reconciliation
 Before authorizing the next implementation wave, reconcile current CotS production against the freshest reachable Shardlands work — especially Shards 115–119 — and the Website/Platform-API/CotS-Game peers. Produce an evidence-backed dependency/capability/reuse matrix and a TASK-117+ roadmap. TASK-116 is read-only for CotS production, Shardlands and peer repositories; only DeveloperTools evidence/roadmap/scheduler artifacts may be changed.
 
+### TASK-117 — Production Embodied MetaHuman Presentation
+Build and prove a production presentation adapter for the TASK-104 appearance recipe. Preserve server authority over identity, movement and collision; prove renderer body/head camera alignment, owner-only presentation visibility, and two-client movement/replication. Reconcile current MetaHuman and peer work before implementation.
+
+### TASK-118 — Authoritative Premises Ownership
+Add stable premise identity, ownership authority, spatial binding, persistence and authoring seams for player, company and guild premises. Prove foreign mutation rejection, restart-safe restoration and replication; do not infer ownership from a client UI or actor name.
+
+### TASK-119 — Housing and Tenancy Authority
+Add versioned tenancy/residency grants on premises ownership, including expiry, revocation, access/privacy policy and restart-safe enforcement. Reconcile website/platform contracts first; server grants are authoritative.
+
+### TASK-120 — Furnishing and Displayed-Item Authority
+Integrate canonical item identity with authoritative premise placement, replication and persistence. Prove that a client cannot place, move or remove an item outside its ownership or tenancy rights.
+
+### TASK-121 — Workshop and Construction Gate
+Reconcile workshop/construction donors and peers after the premises evidence is complete, then define the smallest authoritative workshop/construction foundation. Do not promote content migration before that reconciliation.
+
 ## Completion rule
 Do not skip foundational dependencies simply because a donor implementation exists. Conversely, do not rewrite a subsystem when the donor/production implementation already meets the current contracts and passes production validation. The acceptance evidence decides. TASK-116 must complete before any post-115 implementation backlog item is promoted into an authorized production-mutation task.
