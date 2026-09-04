@@ -56,7 +56,27 @@ Build production HUD/interaction/inventory/social flows plus text chat and local
 Prove an end-to-end multiplayer slice across identity, server authority, persistence, player embodiment, interaction, world streaming/simulation, economy/NPC/law/combat and authoring. Perform scale/performance/security/observability tests and produce the evidence-backed next backlog rather than assuming alpha readiness.
 
 ### TASK-116 — Post-Vertical-Slice Existing-Work Reconciliation
-Before authorizing the next implementation wave, reconcile current CotS production against the freshest reachable Shardlands work — especially Shards 115–119 — and the Website/Platform-API/CotS-Game peers. Produce an evidence-backed dependency/capability/reuse matrix and a TASK-117+ roadmap. TASK-116 is read-only for CotS production, Shardlands and peer repositories; only DeveloperTools evidence/roadmap/scheduler artifacts may be changed.
+Reconcile current CotS production against the freshest reachable Shardlands work and platform peers, disambiguating development shards from same-numbered catalogues. Produce the evidence-backed next campaign.
+
+### TASK-117 — Operations, Event Observability & Regional Diagnostics
+Productionize operational event envelopes, metrics/traces/alerts, privileged diagnostics and region-aware observability before scale work. Explicit production mutation is authorized within the task specification.
+
+### TASK-118 — Scale, Soak & Recovery Engineering Gate
+Run measurable sustained multiplayer/persistence load and restart/recovery testing using TASK-117 observability; fix bounded bottlenecks and record reproducible resource/throughput thresholds.
+
+### TASK-119 — External Platform Integration & Security Hardening
+Reconcile reachable Website/Platform/API/Game contracts, implement the game-side authenticated adapter, server discovery integration and negative security/rate-limit/fuzz coverage without inventing inaccessible peer schemas.
+
+### TASK-120 — Real Local Voice Provider & Privacy Proof
+Integrate a production-ready local-area voice boundary with positional membership, consent, mute/block, moderation and retention/deletion hooks. Credentials, billing or irreversible provider account changes remain human-only gates.
+
+### TASK-121 — Representative Persistent Streamed World-Content Slice
+Build a representative persistent streamed multiplayer world slice using the validated authoring, region, persistence and simulation seams; prove traversal/recovery and produce the next evidence-backed campaign roadmap.
+
+## Continuous campaign rule
+The user's 2026-09-04 authorization promotes TASK-117 through TASK-121 from proposals to active production tasks. Each remains bounded by its task file, the just-in-time existing-work policy, the fixed production lifecycle adapter and the Shardlands read-only rule. A completed task advances automatically to the next incomplete reviewed task without another human click.
+
+When all currently reviewed campaign tasks are COMPLETE_VERIFIED, the provider processes must stop and the watchdog/telemetry must remain alive in a stable `ROADMAP_COMPLETE` / waiting-for-next-campaign state. Completion is not a recoverable failure and must not trigger FixIt or quota cooldown.
 
 ## Completion rule
-Do not skip foundational dependencies simply because a donor implementation exists. Conversely, do not rewrite a subsystem when the donor/production implementation already meets the current contracts and passes production validation. The acceptance evidence decides. TASK-116 must complete before any post-115 implementation backlog item is promoted into an authorized production-mutation task.
+Do not skip dependencies because a donor implementation exists, and do not rewrite capabilities already proven by production evidence. Only durable acceptance evidence advances the scheduler. Production mutation outside the currently reviewed task set or outside `C:\Dev\CotS` remains unauthorized unless a later task explicitly says otherwise.
