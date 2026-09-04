@@ -100,6 +100,36 @@ class TestTask116Scheduler(unittest.TestCase):
         self.assertNotIn("failure", reconciled)
         self.assertEqual(reconciled["compact_task_context"]["task_id"], "TASK-116")
 
+    def test_unreviewed_checkpoint_is_reconciled_to_task_116(self) -> None:
+        checkpoint = {
+            "state": "GOVERNOR_PAUSED",
+            "task": "TASK-117",
+            "phase": "source-inventory",
+            "scheduled_task": "TASK-117",
+            "active_task_override": "TASK-117",
+            "active_agent": "codex",
+            "turn_count": 52,
+            "compact_task_context": {"task_id": "TASK-117", "phase": "source-inventory"},
+            "codex": {"status": "ACTIVE", "thread_id": "unreviewed-thread"},
+            "claude": {"status": "IDLE", "session_id": "unreviewed-session"},
+            "deferred_verifications": [
+                {"task_id": "TASK-117", "required_provider": "claude"},
+            ],
+        }
+        reconciled, changed = fac24.reconcile_completed_checkpoint(checkpoint)
+        self.assertTrue(changed)
+        self.assertEqual(reconciled["state"], "STARTING")
+        self.assertEqual(reconciled["task"], "TASK-116")
+        self.assertEqual(reconciled["phase"], "RECONCILING")
+        self.assertEqual(reconciled["scheduled_task"], "TASK-116")
+        self.assertEqual(reconciled["turn_count"], 52)
+        self.assertIsNone(reconciled["active_task_override"])
+        self.assertIsNone(reconciled["active_agent"])
+        self.assertNotIn("thread_id", reconciled["codex"])
+        self.assertNotIn("session_id", reconciled["claude"])
+        self.assertEqual(reconciled["deferred_verifications"], [])
+        self.assertEqual(reconciled["compact_task_context"]["task_id"], "TASK-116")
+
     def test_current_incomplete_checkpoint_is_preserved(self) -> None:
         checkpoint = {
             "state": "RUNNING_CODEX",
