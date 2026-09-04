@@ -1,0 +1,32 @@
+name: CotS continuous campaign tests
+
+on:
+  push:
+    branches:
+      - main
+      - fix/continuous-24x7-campaign
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile campaign entry points
+        shell: pwsh
+        run: >-
+          python -m py_compile
+          Scripts/CotSAgentSupervisorCampaign.py
+          Scripts/CotSFactoryControllerCampaign.py
+          Scripts/CotSProductionLifecycleCampaign.py
+          Scripts/CotSWatchdogCampaign.py
+      - name: Run campaign regressions
+        shell: pwsh
+        run: python -m unittest Scripts.tests.test_post115_scheduler Scripts.tests.test_continuous_campaign -v
