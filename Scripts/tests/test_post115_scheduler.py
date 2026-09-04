@@ -22,9 +22,9 @@ class TestPost115CampaignScheduler(unittest.TestCase):
         sup.h.install_hardening()
         fac.install_campaign()
 
-    def test_checked_in_state_schedules_task_119(self) -> None:
-        self.assertEqual(sup.h.base.next_required_task(), "TASK-119")
-        self.assertEqual(fac.campaign_next_required_task(), "TASK-119")
+    def test_checked_in_state_schedules_task_120(self) -> None:
+        self.assertEqual(sup.h.base.next_required_task(), "TASK-120")
+        self.assertEqual(fac.campaign_next_required_task(), "TASK-120")
 
     def test_campaign_production_authorization_is_bounded(self) -> None:
         self.assertFalse(sup.campaign_production_task("TASK-116"))
@@ -64,31 +64,31 @@ class TestPost115CampaignScheduler(unittest.TestCase):
             with self.assertRaises(sup.h.base.AppServerError):
                 sup.campaign_load_completion_state(path)
 
-    def test_completed_task_118_checkpoint_reconciles_to_119(self) -> None:
+    def test_completed_task_119_checkpoint_reconciles_to_120(self) -> None:
         checkpoint = {
-            "state": "COMPLETE", "task": "TASK-118", "phase": "complete",
+            "state": "COMPLETE", "task": "TASK-119", "phase": "complete",
             "scheduled_task": "ROADMAP_COMPLETE", "active_agent": None,
-            "compact_task_context": {"task_id": "TASK-118", "phase": "complete"},
+            "compact_task_context": {"task_id": "TASK-119", "phase": "complete"},
             "codex": {"status": "IDLE", "thread_id": "old-thread"},
             "claude": {"status": "IDLE", "session_id": "old-session"},
         }
         reconciled, changed = fac.campaign_reconcile_checkpoint(checkpoint)
         self.assertTrue(changed)
-        self.assertEqual(reconciled["task"], "TASK-119")
+        self.assertEqual(reconciled["task"], "TASK-120")
         self.assertEqual(reconciled["phase"], "RECONCILING")
         self.assertNotIn("thread_id", reconciled["codex"])
         self.assertNotIn("session_id", reconciled["claude"])
 
-    def test_stale_task_118_checkpoint_reconciles_to_119(self) -> None:
+    def test_stale_task_119_checkpoint_reconciles_to_120(self) -> None:
         checkpoint = {
-            "state": "RUNNING_CODEX", "task": "TASK-118", "phase": "scale-soak",
+            "state": "RUNNING_CODEX", "task": "TASK-119", "phase": "security",
             "active_agent": "codex",
-            "compact_task_context": {"task_id": "TASK-118", "phase": "scale-soak"},
+            "compact_task_context": {"task_id": "TASK-119", "phase": "security"},
             "codex": {"status": "ACTIVE", "thread_id": "current-thread"},
         }
         reconciled, changed = fac.campaign_reconcile_checkpoint(checkpoint)
         self.assertTrue(changed)
-        self.assertEqual(reconciled["task"], "TASK-119")
+        self.assertEqual(reconciled["task"], "TASK-120")
         self.assertEqual(reconciled["phase"], "RECONCILING")
         self.assertNotIn("thread_id", reconciled["codex"])
 

@@ -52,6 +52,7 @@ SOCIAL_COMMUNICATION_AUTOMATION_TEST = "CotS.Social.Communication.AuthorityPolic
 OPERATIONS_AUTOMATION_TEST = "CotS.Operations.EventObservability.AuthorityAuditFailureInjection"
 SCALE_SOAK_NETWORK_AUTOMATION_TEST = "CotS.Runtime.ScaleSoak.FourParticipantRecovery"
 SCALE_SOAK_PERSISTENCE_AUTOMATION_TEST = "CotS.ScaleSoak.PersistenceRecovery"
+PLATFORM_SECURITY_AUTOMATION_TEST = "CotS.Platform.Security.MockAdapter"
 SCALE_SOAK_WORKER_COUNT = 4
 SCALE_SOAK_MAX_WORKING_SET_BYTES = 12 * 1024 * 1024 * 1024
 TASK_118_SOURCE_FILES = (
@@ -66,6 +67,10 @@ TASK_118_SOURCE_FILES = (
     "Source/CotS/Private/Tests/CotSOperationsObservabilityTests.cpp",
 )
 TASK_118_SOURCE_MAX_BYTES = 512 * 1024
+TASK_119_SOURCE_FILES = (
+    "Source/CotS/Public/Platform/CotSPlatformIdentity.h",
+    "Source/CotS/Private/Tests/CotSPlatformIdentityTests.cpp",
+)
 VERTICAL_SLICE_AUTOMATION_TESTS = (
     PLATFORM_IDENTITY_AUTOMATION_TEST, PERSISTENCE_AUTOMATION_TEST,
     EMBODIMENT_AUTOMATION_TEST, INVENTORY_AUTOMATION_TEST, SPATIAL_AUTOMATION_TEST,
@@ -478,6 +483,17 @@ def task_118_source_diagnostics() -> dict[str, Any]:
         "source_bytes": total,
         "sources": sources,
     }
+
+
+def task_119_source_diagnostics() -> dict[str, Any]:
+    """Return only TASK-102's token-free production contract source."""
+    sources: dict[str, str] = {}
+    for relative_path in TASK_119_SOURCE_FILES:
+        path = _safe_relpath(relative_path)
+        if not path.is_file():
+            raise Refused(f"TASK-119 required source is missing: {relative_path}")
+        sources[relative_path] = path.read_text(encoding="utf-8", errors="replace")
+    return {"success": True, "task": "TASK-119", "source_files": list(TASK_119_SOURCE_FILES), "sources": sources}
 
 
 def mcp_diagnostics() -> dict[str, Any]:
@@ -1326,6 +1342,15 @@ def world_authoring_automation(timeout_seconds: int = 300) -> dict[str, Any]:
 def social_communication_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     result=_run([str(EDITOR_CMD),str(PROJECT),"-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False",f"-ExecCmds=Automation RunTests {SOCIAL_COMMUNICATION_AUTOMATION_TEST};Quit","-unattended","-nop4","-nosplash","-NullRHI","-NoSound"],cwd=PRODUCTION,timeout=max(60,min(1200,int(timeout_seconds))),creationflags=NEW_PROCESS_GROUP);log=(PRODUCTION/"Saved"/"Logs"/"CotS.log").read_text(encoding="utf-8",errors="replace")[-20000:];expected=f"Test Completed. Result={{Success}} Name={{AuthorityPolicy}} Path={{{SOCIAL_COMMUNICATION_AUTOMATION_TEST}}}";return {"success":result["exit_code"]==0 and expected in log and "**** TEST COMPLETE. EXIT CODE: 0 ****" in log,"test":SOCIAL_COMMUNICATION_AUTOMATION_TEST,"automation_log_verified":expected in log,**result}
 
+def platform_security_automation(timeout_seconds: int = 300) -> dict[str, Any]:
+    if status().get("editor_running"):
+        raise Refused("close the production editor before running platform security automation")
+    result = _run([str(EDITOR_CMD), str(PROJECT), "-ini:EditorPerProjectUserSettings:[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]:bAutoStartServer=False", f"-ExecCmds=Automation RunTests {PLATFORM_SECURITY_AUTOMATION_TEST};Quit", "-unattended", "-nop4", "-nosplash", "-NullRHI", "-NoSound"], cwd=PRODUCTION, timeout=max(60, min(1200, int(timeout_seconds))), creationflags=NEW_PROCESS_GROUP)
+    log = (PRODUCTION / "Saved" / "Logs" / "CotS.log").read_text(encoding="utf-8", errors="replace")[-20000:]
+    expected = f"Path={{{PLATFORM_SECURITY_AUTOMATION_TEST}}}"
+    return {"success": result["exit_code"] == 0 and expected in log and "**** TEST COMPLETE. EXIT CODE: 0 ****" in log, "test": PLATFORM_SECURITY_AUTOMATION_TEST, "automation_log_verified": expected in log, **result}
+
+
 def operations_automation(timeout_seconds: int = 300) -> dict[str, Any]:
     """Run TASK-117's fixed server-only observability contract test."""
     if status().get("editor_running"):
@@ -1414,6 +1439,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="operation", required=True)
     sub.add_parser("status")
     sub.add_parser("task-118-source-diagnostics")
+    sub.add_parser("task-119-source-diagnostics")
     sub.add_parser("mcp-diagnostics")
     sub.add_parser("mcp-toolset-diagnostics")
     sub.add_parser("mcp-meta-tools")
@@ -1444,6 +1470,7 @@ def main() -> int:
     world_authoring_parser = sub.add_parser("world-authoring-automation"); world_authoring_parser.add_argument("--timeout", type=int, default=300)
     social_communication_parser = sub.add_parser("social-communication-automation"); social_communication_parser.add_argument("--timeout", type=int, default=300)
     operations_parser = sub.add_parser("operations-automation"); operations_parser.add_argument("--timeout", type=int, default=300)
+    security_parser = sub.add_parser("platform-security-automation"); security_parser.add_argument("--timeout", type=int, default=300)
     vertical_slice_parser = sub.add_parser("vertical-slice-automation"); vertical_slice_parser.add_argument("--timeout", type=int, default=600)
     map_parser = sub.add_parser("create-entry-map"); map_parser.add_argument("--timeout", type=int, default=300)
     sub.add_parser("open")
@@ -1454,6 +1481,7 @@ def main() -> int:
     try:
         if args.operation == "status": value = status()
         elif args.operation == "task-118-source-diagnostics": value = task_118_source_diagnostics()
+        elif args.operation == "task-119-source-diagnostics": value = task_119_source_diagnostics()
         elif args.operation == "mcp-diagnostics": value = mcp_diagnostics()
         elif args.operation == "mcp-toolset-diagnostics": value = mcp_toolset_diagnostics()
         elif args.operation == "mcp-meta-tools": value = mcp_meta_tools()
@@ -1484,6 +1512,7 @@ def main() -> int:
         elif args.operation == "world-authoring-automation": value = world_authoring_automation(args.timeout)
         elif args.operation == "social-communication-automation": value = social_communication_automation(args.timeout)
         elif args.operation == "operations-automation": value = operations_automation(args.timeout)
+        elif args.operation == "platform-security-automation": value = platform_security_automation(args.timeout)
         elif args.operation == "vertical-slice-automation": value = vertical_slice_automation(args.timeout)
         elif args.operation == "create-entry-map": value = create_entry_map(args.timeout)
         elif args.operation == "open": value = open_editor()
