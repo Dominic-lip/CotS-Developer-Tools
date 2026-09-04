@@ -242,7 +242,12 @@
     },
     {
       "id": "TASK-116",
-      "status": "NOT_STARTED"
+      "status": "COMPLETE_VERIFIED",
+      "evidence": [
+        "Docs/Production/TASK-116_RECONCILIATION_BASELINE.md: read-only current-state, development-shard 115-119, peer-access, capability and TASK-115-backlog reconciliation",
+        "Docs/Production/Reuse/TASK-116.md: source-path/revision-backed reuse classifications",
+        "Docs/Production/TASK-116_NEXT_ROADMAP.md: dependency-ordered authorization-ready TASK-117 through TASK-121 proposals"
+      ]
     }
   ]
 }

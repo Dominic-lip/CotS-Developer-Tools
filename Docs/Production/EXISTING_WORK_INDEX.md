@@ -39,6 +39,21 @@ or rebuild candidates. `AGENTS.md` in the donor retains the multiplayer,
 server-authority, stable-identity, and physical-first constraints as useful
 design evidence, but CotS production architecture remains controlling.
 
+## TASK-116 precision update (2026-09-04)
+
+The post-vertical-slice reconciliation supersedes this index's shallow
+freshness values where it names a source: CotS is clean at
+`699291955328cc2b29e5c4425ef56a77513b040c`; local Shardlands is
+`64f5ca409fab5ccb62d09edde013cdc4fa67649c` on
+`feature/shard-115-embodied-player` and is materially dirty.  The actual
+development-shard references are `066c5ca` (115 MetaHuman framework),
+`43769a9` (116 entity inspection), `624ef25` (117 gameplay fact bus),
+`96d591d` (118 event envelope), and `0b6ddf0` (119 region identity).
+They must not be substituted with same-numbered Feature Catalogue entries.
+`Docs/Production/TASK-116_RECONCILIATION_BASELINE.md` records the full map,
+including the explicit absence of a Shard-116 world-simulation fabric and a
+Shard-118 world-authoring toolkit.
+
 ## Peer repositories and availability
 
 | Source | Observed availability | Expected relevance | Freshness caveat |

@@ -20,11 +20,9 @@ class TestTask116Scheduler(unittest.TestCase):
     def setUpClass(cls) -> None:
         sup24.install_hardening()
 
-    def test_checked_in_state_schedules_task_116(self) -> None:
-        self.assertEqual(sup24.base.next_required_task(), "TASK-116")
-        instruction = sup24.hardened_scheduled_task_instruction()
-        self.assertIn("TASK-116", instruction)
-        self.assertEqual(fac24.hardened_authoritative_next_required_task(), "TASK-116")
+    def test_checked_in_state_records_completed_task_116_gate(self) -> None:
+        self.assertIsNone(sup24.base.next_required_task())
+        self.assertIsNone(fac24.hardened_authoritative_next_required_task())
 
     def test_task_116_does_not_receive_production_mutation_bridge(self) -> None:
         self.assertFalse(sup24._production_task("TASK-116"))
@@ -32,10 +30,11 @@ class TestTask116Scheduler(unittest.TestCase):
         self.assertNotIn("explicit authorization to modify C:\\Dev\\CotS", instruction)
         self.assertTrue(sup24._production_task("TASK-115"))
 
-    def test_loader_accepts_exact_task_116_boundary(self) -> None:
+    def test_loader_accepts_exact_completed_task_116_boundary(self) -> None:
         document = sup24.hardened_load_foundation_completion_state()
         self.assertEqual(document["tasks"][-1]["id"], "TASK-116")
-        self.assertEqual(document["tasks"][-1]["status"], "NOT_STARTED")
+        self.assertEqual(document["tasks"][-1]["status"], "COMPLETE_VERIFIED")
+        self.assertEqual(len(document["tasks"][-1]["evidence"]), 3)
 
     def test_loader_rejects_missing_task_116(self) -> None:
         document = json.loads(sup24.base.FOUNDATION_COMPLETION_STATE.read_text(encoding="utf-8"))
@@ -64,7 +63,7 @@ class TestTask116Scheduler(unittest.TestCase):
             with self.assertRaises(sup24.base.AppServerError):
                 sup24.hardened_load_foundation_completion_state(path)
 
-    def test_completed_checkpoint_is_reconciled_to_task_116(self) -> None:
+    def test_completed_checkpoint_is_unchanged_after_completed_task_116_gate(self) -> None:
         checkpoint = {
             "state": "GOVERNOR_PAUSED",
             "task": "TASK-013",
@@ -84,23 +83,10 @@ class TestTask116Scheduler(unittest.TestCase):
             "failure": "old failure",
         }
         reconciled, changed = fac24.reconcile_completed_checkpoint(checkpoint)
-        self.assertTrue(changed)
-        self.assertEqual(reconciled["state"], "STARTING")
-        self.assertEqual(reconciled["task"], "TASK-116")
-        self.assertEqual(reconciled["phase"], "RECONCILING")
-        self.assertEqual(reconciled["scheduled_task"], "TASK-116")
-        self.assertEqual(reconciled["turn_count"], 41)
-        self.assertIsNone(reconciled["active_agent"])
-        self.assertIsNone(reconciled["pending_handoff_target"])
-        self.assertIsNone(reconciled["active_task_override"])
-        self.assertNotIn("thread_id", reconciled["codex"])
-        self.assertNotIn("session_id", reconciled["claude"])
-        self.assertEqual(reconciled["deferred_verifications"], [])
-        self.assertNotIn("human_gate", reconciled)
-        self.assertNotIn("failure", reconciled)
-        self.assertEqual(reconciled["compact_task_context"]["task_id"], "TASK-116")
+        self.assertFalse(changed)
+        self.assertEqual(reconciled, checkpoint)
 
-    def test_unreviewed_checkpoint_is_reconciled_to_task_116(self) -> None:
+    def test_unreviewed_checkpoint_is_unchanged_after_completed_task_116_gate(self) -> None:
         checkpoint = {
             "state": "GOVERNOR_PAUSED",
             "task": "TASK-117",
@@ -117,18 +103,8 @@ class TestTask116Scheduler(unittest.TestCase):
             ],
         }
         reconciled, changed = fac24.reconcile_completed_checkpoint(checkpoint)
-        self.assertTrue(changed)
-        self.assertEqual(reconciled["state"], "STARTING")
-        self.assertEqual(reconciled["task"], "TASK-116")
-        self.assertEqual(reconciled["phase"], "RECONCILING")
-        self.assertEqual(reconciled["scheduled_task"], "TASK-116")
-        self.assertEqual(reconciled["turn_count"], 52)
-        self.assertIsNone(reconciled["active_task_override"])
-        self.assertIsNone(reconciled["active_agent"])
-        self.assertNotIn("thread_id", reconciled["codex"])
-        self.assertNotIn("session_id", reconciled["claude"])
-        self.assertEqual(reconciled["deferred_verifications"], [])
-        self.assertEqual(reconciled["compact_task_context"]["task_id"], "TASK-116")
+        self.assertFalse(changed)
+        self.assertEqual(reconciled, checkpoint)
 
     def test_current_incomplete_checkpoint_is_preserved(self) -> None:
         checkpoint = {
