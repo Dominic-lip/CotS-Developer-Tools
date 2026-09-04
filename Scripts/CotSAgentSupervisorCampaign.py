@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from typing import Any
 
 import CotSAgentSupervisor24x7 as h
@@ -36,7 +35,7 @@ def campaign_production_task(task: object) -> bool:
     value = str(task or "")
     if value == "TASK-015":
         return True
-    match = re.fullmatch(r"TASK-(\d{{3}})", value)
+    match = re.fullmatch(r"TASK-(\d{3})", value)
     return bool(match and 100 <= int(match.group(1)) <= CAMPAIGN_LAST_TASK)
 
 
