@@ -19,25 +19,28 @@ The core policy is:
 ## Process hierarchy
 
 ```text
-Windows Scheduled Task
-└─ CotSWatchdog24x7Final.py
-   └─ CotSWatchdog24x7Enhanced.py
-      ├─ localhost telemetry/control :8765
-      ├─ cross-process-safe ProviderUsageLedger
-      ├─ read-only Codex rate-limit probe
-      ├─ ProductivityGovernor
-      ├─ HardwareMonitor
-      ├─ LocalAI (optional Ollama on 127.0.0.1)
-      ├─ RollbackGuard + canary
-      ├─ OperationalMetrics + MilestoneNotifier
-      └─ CotSFactoryController24x7.py
-         ├─ CotSHostMcp.py
-         └─ CotSAgentSupervisor24x7.py
-            ├─ Codex app-server
-            └─ Claude CLI
+Windows Scheduled Task / Launch-CotS.bat
+└─ CotSWatchdogCampaign.py
+   └─ CotSWatchdog24x7Final.py
+      └─ CotSWatchdog24x7Enhanced.py
+         ├─ localhost telemetry/control :8765
+         ├─ cross-process-safe ProviderUsageLedger
+         ├─ read-only Codex rate-limit probe
+         ├─ ProductivityGovernor
+         ├─ HardwareMonitor
+         ├─ LocalAI (optional Ollama on 127.0.0.1)
+         ├─ RollbackGuard + canary
+         ├─ OperationalMetrics + MilestoneNotifier
+         └─ CotSFactoryControllerCampaign.py
+            ├─ CotSFactoryController24x7.py
+            │  └─ CotSHostMcp.py
+            └─ CotSAgentSupervisorCampaign.py
+               └─ CotSAgentSupervisor24x7.py
+                  ├─ Codex app-server
+                  └─ Claude CLI
 ```
 
-`CotSControlCenter24x7Final.py` opens the enhanced UI through a non-blocking read-mostly usage-ledger adapter. Closing it does not stop the watchdog. The watchdog remains the preferred usage-ledger writer so the GUI cannot double-consume provider protocol offsets.
+`CotSControlCenter.py` is the canonical Control Center and explicitly falls back to the campaign watchdog. It opens the mature enhanced UI through a non-blocking read-mostly usage-ledger adapter. Closing it does not stop the watchdog. The watchdog remains the preferred usage-ledger writer so the GUI cannot double-consume provider protocol offsets.
 
 ## Provider usage and quota
 
@@ -219,10 +222,10 @@ This registers `CotS Autonomous Factory 24x7` at user logon with automatic proce
 ## Manual launch
 
 ```text
-Scripts\Launch-CotS-24x7.bat
+Scripts\Launch-CotS.bat
 ```
 
-This starts the production-safe enhanced watchdog and opens the enhanced Control Center.
+This starts the production campaign watchdog and opens the canonical Control Center. Historical launcher names redirect here.
 
 ## Remote telemetry
 

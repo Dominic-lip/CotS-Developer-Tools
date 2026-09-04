@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 $TaskName = "CotS Autonomous Factory 24x7"
 $Repo = Split-Path -Parent $PSScriptRoot
-$Watchdog = Join-Path $PSScriptRoot "CotSWatchdog24x7Final.py"
+$Watchdog = Join-Path $PSScriptRoot "CotSWatchdogCampaign.py"
 
 if ($Uninstall) {
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue

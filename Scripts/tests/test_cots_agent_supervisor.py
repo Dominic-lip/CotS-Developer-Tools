@@ -155,7 +155,36 @@ class NullStatusBusIO(unittest.TestCase):
         self.addCleanup(self._log_event_patch.stop)
 
 
-class TestRoadmapCompletionState(unittest.TestCase):
+class LegacyBaseRoadmapFixture(unittest.TestCase):
+    """Exercise the retained pre-campaign supervisor only against its fixture.
+
+    The checked-in roadmap is now owned by the campaign scheduler.  Feeding it
+    to this compatibility implementation must fail closed rather than silently
+    scheduling TASK-117 through the wrong supervisor entry point.
+    """
+
+    def setUp(self) -> None:
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        document = json.loads(sup.FOUNDATION_COMPLETION_STATE.read_text(encoding="utf-8"))
+        document["tasks"] = [
+            entry for entry in document["tasks"]
+            if entry["id"] == "TASK-015" or not (entry["id"].startswith("TASK-1") and int(entry["id"].split("-", 1)[1]) > 115)
+        ]
+        for entry in document["tasks"]:
+            entry["status"] = "COMPLETE_VERIFIED"
+            entry["evidence"] = ["legacy fixture"]
+        next(entry for entry in document["tasks"] if entry["id"] == "TASK-012")["status"] = "NOT_STARTED"
+        next(entry for entry in document["tasks"] if entry["id"] == "TASK-013")["status"] = "NOT_STARTED"
+        self.path = Path(self._directory.name) / "legacy-completion.json"
+        self.path.write_text(json.dumps(document), encoding="utf-8")
+        self._load = sup.load_foundation_completion_state
+        self._loader_patch = mock.patch.object(sup, "load_foundation_completion_state", lambda _path=sup.FOUNDATION_COMPLETION_STATE: self._load(self.path))
+        self._loader_patch.start()
+        self.addCleanup(self._loader_patch.stop)
+
+
+class TestRoadmapCompletionState(LegacyBaseRoadmapFixture):
     def test_checked_in_state_schedules_earliest_unverified_foundation_task(self):
         self.assertEqual(sup.next_required_task(), "TASK-012")
         verified, reason = sup.foundation_completion_decision()
@@ -167,7 +196,11 @@ class TestRoadmapCompletionState(unittest.TestCase):
             state_path = Path(directory) / "state.json"
             state_path.write_text('{"tasks": []}', encoding="utf-8")
             with self.assertRaises(sup.AppServerError):
-                sup.load_foundation_completion_state(state_path)
+                self._load(state_path)
+
+    def test_base_scheduler_rejects_the_live_campaign_document(self):
+        with self.assertRaises(sup.AppServerError):
+            self._load(sup.FOUNDATION_COMPLETION_STATE)
 
     def test_unverified_complete_marker_has_a_scheduler_instruction(self):
         instruction = sup.scheduled_task_instruction()
@@ -181,7 +214,7 @@ class TestRoadmapCompletionState(unittest.TestCase):
         self.assertIn(sup.PROVIDER_SELF_VALIDATION_RULE, sup.CLAUDE_START)
 
 
-class TestDeferredProviderVerification(unittest.TestCase):
+class TestDeferredProviderVerification(LegacyBaseRoadmapFixture):
     def checkpoint(self):
         return {
             "task": "TASK-012", "phase": "claude-proof", "compact_task_context": {

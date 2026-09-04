@@ -74,6 +74,12 @@ class TestRecoveryPolicy(unittest.TestCase):
     def test_later_production_task_prevents_completion(self):
         with tempfile.TemporaryDirectory() as directory:
             document = json.loads(factory.COMPLETION_STATE.read_text(encoding="utf-8"))
+            # The base Factory is retained only for pre-campaign compatibility.
+            # It must not consume the live TASK-117..121 scheduler universe.
+            document["tasks"] = [
+                entry for entry in document["tasks"]
+                if entry["id"] == "TASK-015" or not (entry["id"].startswith("TASK-1") and int(entry["id"].split("-", 1)[1]) > 115)
+            ]
             for task in document["tasks"]:
                 task["status"] = "COMPLETE_VERIFIED"
                 task["evidence"] = ["test evidence"]
@@ -193,7 +199,10 @@ class TestSupervisorLifecycleMonitoring(unittest.TestCase):
             self.assertEqual(controller.state["factory"], "HUMAN_REQUIRED")
             factory.SUPERVISOR_STATE.write_text(json.dumps({"state": "COMPLETE"}), encoding="utf-8")
             controller = factory.FactoryController()
-            with mock.patch.object(controller, "start_supervisor") as start:
+            # The base controller must reject the live campaign document; this
+            # test isolates its historical false-complete recovery behaviour.
+            with mock.patch.object(factory, "authoritative_next_required_task", return_value="TASK-012"), \
+                 mock.patch.object(controller, "start_supervisor") as start:
                 self.assertTrue(controller.handle_gate(0))
                 start.assert_called_once_with()
             self.assertNotEqual(controller.state["factory"], "COMPLETE")
